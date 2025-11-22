@@ -1,0 +1,49 @@
+{
+  "name": "intelligence-test",
+  "version": "1.0.0",
+  "description": "Intelligent Testing Platform with CAT Algorithm and AI",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
+  },
+  "keywords": [
+    "react",
+    "testing",
+    "CAT",
+    "AI",
+    "education"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@tensorflow-models/blazeface": "^0.1.0",
+    "@tensorflow-models/coco-ssd": "^2.2.3",
+    "@tensorflow/tfjs": "^4.22.0",
+    "axios": "^1.13.1",
+    "firebase": "^12.5.0",
+    "lucide-react": "^0.554.0",
+    "openai": "^6.7.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.9.5",
+    "react-webcam": "^7.2.0",
+    "recharts": "^3.3.0",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.16",
+    "@types/node": "^24.9.2",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.1.0",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.16",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12"
+  }
+}
