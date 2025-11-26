@@ -32,7 +32,7 @@ if (hasFirebaseConfig) {
   auth = getAuth(app);
   db = getFirestore(app);
 } else if (!isDevMode) {
-  console.error('Firebase configuration is missing. Please set up Firebase environment variables.');
+  console.warn('Firebase configuration is missing. Some features may not work.');
 }
 
 export { app, auth, db, isDevMode, hasFirebaseConfig };

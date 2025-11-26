@@ -7,7 +7,7 @@ const ClassManagement: React.FC = () => {
   const { classId } = useParams<{ classId: string }>();
   const navigate = useNavigate();
   const { classes, addStudentToClass } = useStore();
-  
+
   const classData = classes.find(c => c.id === classId);
   const [showAddStudent, setShowAddStudent] = useState(false);
   const [studentEmail, setStudentEmail] = useState('');
@@ -163,8 +163,11 @@ const ClassManagement: React.FC = () => {
 
       {/* Add Student Modal */}
       {showAddStudent && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-8 max-w-md w-full">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]" onClick={() => setShowAddStudent(false)}>
+          <div
+            className="bg-white rounded-lg p-8 max-w-md w-full shadow-2xl transform transition"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h2 className="text-2xl font-bold mb-4">Add Student</h2>
             <div className="space-y-4">
               <div>
@@ -177,6 +180,7 @@ const ClassManagement: React.FC = () => {
                   onChange={(e) => setStudentEmail(e.target.value)}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   placeholder="student@example.com"
+                  autoFocus
                 />
               </div>
               <div className="flex gap-4">

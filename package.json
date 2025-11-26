@@ -20,10 +20,14 @@
   "license": "MIT",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@mediapipe/face_mesh": "^0.4.1633559619",
     "@tensorflow-models/blazeface": "^0.1.0",
     "@tensorflow-models/coco-ssd": "^2.2.3",
+    "@tensorflow-models/face-landmarks-detection": "^1.0.6",
     "@tensorflow/tfjs": "^4.22.0",
+    "@types/d3": "^7.4.3",
     "axios": "^1.13.1",
+    "d3": "^7.9.0",
     "firebase": "^12.5.0",
     "lucide-react": "^0.554.0",
     "openai": "^6.7.0",
@@ -32,6 +36,7 @@
     "react-router-dom": "^7.9.5",
     "react-webcam": "^7.2.0",
     "recharts": "^3.3.0",
+    "socket.io-client": "^4.8.1",
     "zustand": "^5.0.8"
   },
   "devDependencies": {

@@ -13,7 +13,7 @@ const LoginPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
-  const { login, register } = useStore();
+  const { login, register, error } = useStore();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,7 +42,7 @@ const LoginPage: React.FC = () => {
       }
     } catch (error) {
       console.error('Authentication error:', error);
-      alert(isSignUp ? 'Đăng ký thất bại. Vui lòng thử lại.' : 'Đăng nhập thất bại. Vui lòng kiểm tra thông tin.');
+      // Error is already set in store by login/register actions
     } finally {
       setIsLoading(false);
     }
@@ -55,7 +55,7 @@ const LoginPage: React.FC = () => {
       <div className="relative w-full max-w-5xl flex bg-white rounded-lg shadow-academic-lg overflow-hidden border border-academic-200">
         <div className="hidden lg:flex lg:w-1/2 bg-academic-900 p-12 flex-col justify-between text-black relative overflow-hidden">
           <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:20px_20px]"></div>
-          
+
           <div className="relative z-10">
             <div className="mb-8">
               <div className="inline-flex items-center gap-3 mb-6">
@@ -110,7 +110,7 @@ const LoginPage: React.FC = () => {
             </div>
           </div>
 
-          
+
         </div>
 
         <div className="w-full lg:w-1/2 bg-white p-8 lg:p-12">
@@ -119,13 +119,31 @@ const LoginPage: React.FC = () => {
               {isSignUp ? 'Tạo Tài Khoản' : 'Đăng Nhập'}
             </h2>
             <p className="text-academic-600">
-              {isSignUp 
-                ? 'Điền thông tin để bắt đầu hành trình học tập' 
+              {isSignUp
+                ? 'Điền thông tin để bắt đầu hành trình học tập'
                 : 'Chào mừng trở lại! Vui lòng đăng nhập để tiếp tục'}
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Error Message Display */}
+            {error && (
+              <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4 rounded-r">
+                <div className="flex">
+                  <div className="flex-shrink-0">
+                    <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <div className="ml-3">
+                    <p className="text-sm text-red-700">
+                      {error}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {isSignUp && (
               <div>
                 <label className="block text-sm font-medium text-academic-700 mb-2">
@@ -206,86 +224,86 @@ const LoginPage: React.FC = () => {
 
             {/* ---------- ROLE SELECTION (UPDATED for clearer selected state) ---------- */}
             {/* ---------- ROLE SELECTION (Black selected) ---------- */}
-<div>
-  <label className="block text-sm font-medium text-academic-700 mb-3">
-    Vai Trò
-  </label>
-  <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-academic-700 mb-3">
+                Vai Trò
+              </label>
+              <div className="grid grid-cols-2 gap-3">
 
-    {/* Student */}
-    <label className="cursor-pointer" aria-checked={role === 'student'} role="radio">
-      <input
-        type="radio"
-        value="student"
-        checked={role === 'student'}
-        onChange={() => setRole('student')}
-        className="sr-only"
-      />
-      <div
-        className={`p-4 border-2 rounded-lg text-center transition flex flex-col items-center gap-2
+                {/* Student */}
+                <label className="cursor-pointer" aria-checked={role === 'student'} role="radio">
+                  <input
+                    type="radio"
+                    value="student"
+                    checked={role === 'student'}
+                    onChange={() => setRole('student')}
+                    className="sr-only"
+                  />
+                  <div
+                    className={`p-4 border-2 rounded-lg text-center transition flex flex-col items-center gap-2
           ${role === 'student'
-            ? 'bg-gray-900 border-gray-900 shadow-md ring-2 ring-gray-300'
-            : 'bg-white border-gray-300 hover:border-gray-400'}
+                        ? 'bg-gray-900 border-gray-900 shadow-md ring-2 ring-gray-300'
+                        : 'bg-white border-gray-300 hover:border-gray-400'}
         `}
-      >
-        <div
-          className={`flex items-center justify-center w-10 h-10 rounded-md transition 
+                  >
+                    <div
+                      className={`flex items-center justify-center w-10 h-10 rounded-md transition 
             ${role === 'student' ? 'bg-white/10' : 'bg-transparent'}
           `}
-        >
-          <GraduationCapIcon
-            size={24}
-            className={`${role === 'student' ? 'text-white' : 'text-gray-700'}`}
-          />
-        </div>
-        <span
-          className={`font-medium text-sm transition
+                    >
+                      <GraduationCapIcon
+                        size={24}
+                        className={`${role === 'student' ? 'text-white' : 'text-gray-700'}`}
+                      />
+                    </div>
+                    <span
+                      className={`font-medium text-sm transition
             ${role === 'student' ? 'text-white' : 'text-gray-900'}
           `}
-        >
-          Sinh Viên
-        </span>
-      </div>
-    </label>
+                    >
+                      Sinh Viên
+                    </span>
+                  </div>
+                </label>
 
-    {/* Instructor */}
-    <label className="cursor-pointer" aria-checked={role === 'instructor'} role="radio">
-      <input
-        type="radio"
-        value="instructor"
-        checked={role === 'instructor'}
-        onChange={() => setRole('instructor')}
-        className="sr-only"
-      />
-      <div
-        className={`p-4 border-2 rounded-lg text-center transition flex flex-col items-center gap-2
+                {/* Instructor */}
+                <label className="cursor-pointer" aria-checked={role === 'instructor'} role="radio">
+                  <input
+                    type="radio"
+                    value="instructor"
+                    checked={role === 'instructor'}
+                    onChange={() => setRole('instructor')}
+                    className="sr-only"
+                  />
+                  <div
+                    className={`p-4 border-2 rounded-lg text-center transition flex flex-col items-center gap-2
           ${role === 'instructor'
-            ? 'bg-gray-900 border-gray-900 shadow-md ring-2 ring-gray-300'
-            : 'bg-white border-gray-300 hover:border-gray-400'}
+                        ? 'bg-gray-900 border-gray-900 shadow-md ring-2 ring-gray-300'
+                        : 'bg-white border-gray-300 hover:border-gray-400'}
         `}
-      >
-        <div
-          className={`flex items-center justify-center w-10 h-10 rounded-md transition 
+                  >
+                    <div
+                      className={`flex items-center justify-center w-10 h-10 rounded-md transition 
             ${role === 'instructor' ? 'bg-white/10' : 'bg-transparent'}
           `}
-        >
-          <UserTeacherIcon
-            size={24}
-            className={`${role === 'instructor' ? 'text-white' : 'text-gray-700'}`}
-          />
-        </div>
-        <span
-          className={`font-medium text-sm transition
+                    >
+                      <UserTeacherIcon
+                        size={24}
+                        className={`${role === 'instructor' ? 'text-white' : 'text-gray-700'}`}
+                      />
+                    </div>
+                    <span
+                      className={`font-medium text-sm transition
             ${role === 'instructor' ? 'text-white' : 'text-gray-900'}
           `}
-        >
-          Giảng Viên
-        </span>
-      </div>
-    </label>
+                    >
+                      Giảng Viên
+                    </span>
+                  </div>
+                </label>
 
-  </div>
-</div>
+              </div>
+            </div>
 
 
             <button
@@ -316,8 +334,8 @@ const LoginPage: React.FC = () => {
               }}
               className="text-academic-600 hover:text-academic-900 font-medium text-sm transition"
             >
-              {isSignUp 
-                ? '← Đã có tài khoản? Đăng nhập ngay' 
+              {isSignUp
+                ? '← Đã có tài khoản? Đăng nhập ngay'
                 : 'Chưa có tài khoản? Đăng ký miễn phí →'}
             </button>
           </div>

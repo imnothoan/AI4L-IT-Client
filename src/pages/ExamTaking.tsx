@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import Webcam from 'react-webcam';
-import { useStore } from '@/store';
-import { CATAlgorithm } from '@/algorithms/cat';
-import { antiCheatService } from '@/services/antiCheatService';
+import { useStore } from '../store';
+import { ExamProctor } from '../components/ExamProctor';
+// import { ThetaChart } from '../components/ThetaChart';
+import CATAlgorithm from '../algorithms/CATAlgorithm';
+// import { apiClient } from '../services/apiClient';
 import { Question, CheatWarning } from '@/types';
 import {
   FileTextIcon, ZapIcon, BookOpenIcon, ChartBarIcon, LightbulbIcon,
@@ -14,8 +15,12 @@ import { ClipboardList, AlertTriangle, Check, Keyboard, Rocket, Star } from 'luc
 const ExamTaking: React.FC = () => {
   const { examId } = useParams<{ examId: string }>();
   const navigate = useNavigate();
-  const webcamRef = useRef<Webcam>(null);
-  const monitoringIntervalRef = useRef<number | null>(null);
+  const [attemptId, setAttemptId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  // const [theta, setTheta] = useState<number>(0);
+  // const [standardError, setStandardError] = useState<number>(1.0);
+  // const [thetaHistory, setThetaHistory] = useState<number[]>([]);
+  // webcamRef and monitoringIntervalRef removed as they are handled in ExamProctor
 
   const { currentUser, exams, startExamAttempt, updateExamAttempt, submitExamAttempt } = useStore();
 
@@ -31,7 +36,7 @@ const ExamTaking: React.FC = () => {
   const [currentAnswer, setCurrentAnswer] = useState<string>('');
   const [warnings, setWarnings] = useState<CheatWarning[]>([]);
   const [timeRemaining, setTimeRemaining] = useState(exam?.duration ? exam.duration * 60 : 0);
-  const [isMonitoringActive, setIsMonitoringActive] = useState(false);
+  // const [isMonitoringActive, setIsMonitoringActive] = useState(false);
   const [questionStartTime, setQuestionStartTime] = useState(Date.now());
 
   // New state for enhanced features
@@ -95,29 +100,14 @@ const ExamTaking: React.FC = () => {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [attempt]);
 
-  // Initialize anti-cheat if enabled
   useEffect(() => {
-    if (!attempt) return;
-
-    if (exam?.antiCheatEnabled) {
-      antiCheatService.initialize().then(() => {
-        setIsMonitoringActive(true);
-        startMonitoring();
-      }).catch(err => {
-        console.error('Failed to initialize anti-cheat:', err);
-        alert('Camera access required for this exam. Please enable camera permissions.');
-      });
-    }
+    // Initialize anti-cheat if enabled
+    // Handled by ExamProctor component now
 
     // Load first question
     if (catAlgorithm && exam) {
       loadNextQuestion();
     }
-
-    return () => {
-      stopMonitoring();
-      antiCheatService.dispose();
-    };
   }, [attempt]);
 
   // Timer countdown
@@ -137,33 +127,7 @@ const ExamTaking: React.FC = () => {
     return () => clearInterval(timer);
   }, [attempt]);
 
-  const startMonitoring = () => {
-    if (monitoringIntervalRef.current) return;
-
-    monitoringIntervalRef.current = window.setInterval(async () => {
-      if (webcamRef.current?.video && attempt) {
-        const warning = await antiCheatService.analyzeFrame(
-          webcamRef.current.video,
-          attempt.id
-        );
-
-        if (warning) {
-          setWarnings(prev => [...prev, warning]);
-          updateExamAttempt(attempt.id, {
-            warnings: [...warnings, warning],
-            status: warnings.length >= 3 ? 'flagged' : 'in-progress',
-          });
-        }
-      }
-    }, 2000);
-  };
-
-  const stopMonitoring = () => {
-    if (monitoringIntervalRef.current) {
-      clearInterval(monitoringIntervalRef.current);
-      monitoringIntervalRef.current = null;
-    }
-  };
+  // Monitoring functions removed - handled by ExamProctor
 
   const loadNextQuestion = () => {
     if (!catAlgorithm || !exam) return;
@@ -264,7 +228,7 @@ const ExamTaking: React.FC = () => {
   const handleSubmitExam = async () => {
     if (!attempt) return;
 
-    stopMonitoring();
+    // stopMonitoring(); // Handled by component unmount
     exitFullscreen();
 
     try {
@@ -291,7 +255,7 @@ const ExamTaking: React.FC = () => {
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+    return `${mins}:${secs.toString().padStart(2, '0')} `;
   };
 
   const getTimeWarningColor = () => {
@@ -403,33 +367,11 @@ const ExamTaking: React.FC = () => {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-50">
       <InstructionsModal />
 
-      {/* Fullscreen Camera - Picture in Picture */}
-      {exam.antiCheatEnabled && isMonitoringActive && isFullscreen && (
-        <div className="fixed top-6 right-6 z-40 group">
-          <div className="relative bg-white rounded-2xl shadow-2xl overflow-hidden border-4 border-blue-500 transform transition-all hover:scale-105">
-            <Webcam
-              ref={webcamRef}
-              audio={false}
-              className="w-64 h-48 object-cover"
-              screenshotFormat="image/jpeg"
-              mirrored={true}
-            />
-            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-3">
-              <div className="flex items-center justify-between text-white text-xs">
-                <span className="flex items-center gap-1">
-                  <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
-                  Đang giám sát
-                </span>
-                <span className="bg-red-500 px-2 py-1 rounded-full font-bold">LIVE</span>
-              </div>
-            </div>
-          </div>
-          {warnings.length > 0 && (
-            <div className="absolute -bottom-2 -right-2 bg-red-500 text-white w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-lg animate-bounce">
-              {warnings.length}
-            </div>
-          )}
-        </div>
+      <InstructionsModal />
+
+      {/* AI Proctor Component */}
+      {exam.antiCheatEnabled && attempt && (
+        <ExamProctor examId={exam.id} attemptId={attempt.id} />
       )}
 
       {/* Modern Header */}
@@ -476,7 +418,7 @@ const ExamTaking: React.FC = () => {
                   <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
                   </svg>
-                  <span className={`text-xl font-bold ${getTimeWarningColor()}`}>
+                  <span className={`text - xl font - bold ${getTimeWarningColor()} `}>
                     {formatTime(timeRemaining)}
                   </span>
                 </div>
@@ -507,7 +449,7 @@ const ExamTaking: React.FC = () => {
               <div
                 className="h-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-500 ease-out"
                 style={{
-                  width: `${(askedQuestions.length / (exam.isAdaptive ? 15 : exam.questions.length)) * 100}%`
+                  width: `${(askedQuestions.length / (exam.isAdaptive ? 15 : exam.questions.length)) * 100}% `
                 }}
               ></div>
             </div>
@@ -546,10 +488,10 @@ const ExamTaking: React.FC = () => {
                     </div>
                     <button
                       onClick={toggleBookmark}
-                      className={`p-2 rounded-lg transition flex-shrink-0 ${bookmarkedQuestions.has(currentQuestion.id)
+                      className={`p - 2 rounded - lg transition flex - shrink - 0 ${bookmarkedQuestions.has(currentQuestion.id)
                         ? 'bg-yellow-400 text-yellow-900'
                         : 'bg-white/20 text-white hover:bg-white/30'
-                        }`}
+                        } `}
                       title="Đánh dấu câu hỏi (Ctrl/⌘ + B)"
                     >
                       <svg className="w-6 h-6" fill={bookmarkedQuestions.has(currentQuestion.id) ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
@@ -570,10 +512,10 @@ const ExamTaking: React.FC = () => {
                       {currentQuestion.options.map((option, index) => (
                         <label
                           key={index}
-                          className={`group flex items-start p-5 border-2 rounded-xl cursor-pointer transition-all hover:shadow-md ${currentAnswer === String(index)
+                          className={`group flex items - start p - 5 border - 2 rounded - xl cursor - pointer transition - all hover: shadow - md ${currentAnswer === String(index)
                             ? 'border-blue-500 bg-blue-50 shadow-md'
                             : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/50'
-                            }`}
+                            } `}
                         >
                           <div className="flex items-center h-6">
                             <input
@@ -586,13 +528,13 @@ const ExamTaking: React.FC = () => {
                             />
                           </div>
                           <div className="ml-4 flex-1">
-                            <span className={`text-lg ${currentAnswer === String(index) ? 'text-blue-900 font-medium' : 'text-gray-700'
-                              }`}>
+                            <span className={`text - lg ${currentAnswer === String(index) ? 'text-blue-900 font-medium' : 'text-gray-700'
+                              } `}>
                               {option}
                             </span>
                           </div>
-                          <div className={`ml-4 text-2xl transition-opacity ${currentAnswer === String(index) ? 'opacity-100' : 'opacity-0'
-                            }`}>
+                          <div className={`ml - 4 text - 2xl transition - opacity ${currentAnswer === String(index) ? 'opacity-100' : 'opacity-0'
+                            } `}>
                             ✓
                           </div>
                         </label>
@@ -639,43 +581,12 @@ const ExamTaking: React.FC = () => {
           {/* Sidebar - Only visible when not in fullscreen */}
           {!isFullscreen && (
             <div className="lg:w-80 space-y-6">
-              {/* Camera Monitor */}
-              {exam.antiCheatEnabled && (
+              {/* Camera Monitor - Replaced by ExamProctor Overlay */}
+              {/* {exam.antiCheatEnabled && (
                 <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
-                  <div className="bg-gradient-to-r from-red-500 to-red-600 p-4 text-white">
-                    <h3 className="font-bold flex items-center gap-2">
-                      <span className="text-xl">🎥</span>
-                      Giám Sát Camera
-                    </h3>
-                  </div>
-                  {isMonitoringActive ? (
-                    <div className="p-4">
-                      <div className="relative rounded-xl overflow-hidden">
-                        <Webcam
-                          ref={webcamRef}
-                          audio={false}
-                          className="w-full rounded-xl"
-                          screenshotFormat="image/jpeg"
-                          mirrored={true}
-                        />
-                        <div className="absolute top-2 right-2 bg-red-500 text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1">
-                          <span className="w-2 h-2 bg-white rounded-full animate-pulse"></span>
-                          LIVE
-                        </div>
-                      </div>
-                      <div className="mt-4 text-sm text-gray-600 bg-red-50 p-3 rounded-lg">
-                        <p className="font-semibold text-red-800 mb-1">⚠️ Giám sát đang hoạt động</p>
-                        <p className="text-xs">Luôn nhìn vào màn hình. Tránh nhìn ra ngoài hoặc có người khác xuất hiện.</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="p-4">
-                      <div className="animate-pulse bg-gray-200 h-48 rounded-xl"></div>
-                      <p className="text-sm text-gray-600 mt-4">Đang khởi động camera...</p>
-                    </div>
-                  )}
+                   ... (Legacy Camera UI removed) ...
                 </div>
-              )}
+              )} */}
 
               {/* Warnings */}
               {warnings.length > 0 && (
@@ -737,7 +648,7 @@ const ExamTaking: React.FC = () => {
                       <div className="h-3 bg-blue-100 rounded-full overflow-hidden">
                         <div
                           className="h-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-500"
-                          style={{ width: `${catAlgorithm.getState().estimatedAbility * 100}%` }}
+                          style={{ width: `${catAlgorithm.getState().estimatedAbility * 100}% ` }}
                         ></div>
                       </div>
                     </div>
@@ -751,7 +662,7 @@ const ExamTaking: React.FC = () => {
                       <div className="h-3 bg-blue-100 rounded-full overflow-hidden">
                         <div
                           className="h-full bg-gradient-to-r from-green-500 to-green-600 transition-all duration-500"
-                          style={{ width: `${(1 - catAlgorithm.getState().standardError) * 100}%` }}
+                          style={{ width: `${(1 - catAlgorithm.getState().standardError) * 100}% ` }}
                         ></div>
                       </div>
                     </div>

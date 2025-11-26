@@ -5,14 +5,30 @@ import {
   UserTeacherIcon, BuildingIcon, FileTextIcon, ChartBarIcon, ActivityIcon,
   ZapIcon, PlusCircleIcon, EyeIcon, LibraryIcon
 } from '@/components/icons/AcademicIcons';
-import { Plus, BookOpen, Cloud, School, FileText, Video, Check } from 'lucide-react';
+import { Plus, BookOpen, Cloud, School, FileText, Video, Check, RefreshCw } from 'lucide-react';
 
 const InstructorDashboard: React.FC = () => {
   const navigate = useNavigate();
-  const { currentUser, logout, classes, exams, examAttempts, createClass } = useStore();
+  const { currentUser, logout, classes, exams, examAttempts, createClass, loadClassesByInstructor, isLoading } = useStore();
   const [showCreateClass, setShowCreateClass] = useState(false);
   const [className, setClassName] = useState('');
   const [classDescription, setClassDescription] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Load classes on mount
+  React.useEffect(() => {
+    if (currentUser) {
+      loadClassesByInstructor(currentUser.id);
+    }
+  }, [currentUser, loadClassesByInstructor]);
+
+  const handleRefreshClasses = async () => {
+    if (currentUser) {
+      setIsRefreshing(true);
+      await loadClassesByInstructor(currentUser.id);
+      setIsRefreshing(false);
+    }
+  };
 
   const handleLogout = async () => {
     await logout();
@@ -33,6 +49,8 @@ const InstructorDashboard: React.FC = () => {
       setShowCreateClass(false);
       setClassName('');
       setClassDescription('');
+      // Refresh list after creation
+      await loadClassesByInstructor(currentUser.id);
     } catch (error) {
       console.error('Error creating class:', error);
       alert('Không thể tạo lớp học. Vui lòng thử lại.');
@@ -40,7 +58,8 @@ const InstructorDashboard: React.FC = () => {
   };
 
   const instructorExams = exams.filter(exam => exam.instructorId === currentUser?.id);
-  const instructorClasses = classes.filter(cls => cls.instructorId === currentUser?.id);
+  // Use classes directly from store as they should be loaded for this instructor
+  const instructorClasses = classes;
 
   // Calculate statistics
   const totalStudents = instructorClasses.reduce((sum, cls) => sum + cls.students.length, 0);
@@ -52,6 +71,14 @@ const InstructorDashboard: React.FC = () => {
     attempt.status === 'in-progress' &&
     instructorExams.some(exam => exam.id === attempt.examId)
   ).length;
+
+  // Fetch AI status on mount
+  // React.useEffect(() => {
+  //   useStore.getState().loadAnticheatStatus();
+  // }, []);
+
+  // const { anticheatStatus } = useStore();
+  const activeAIModels = 0; // anticheatStatus?.models ? Object.keys(anticheatStatus.models).length : 0;
 
   return (
     <div className="min-h-screen bg-academic-50">
@@ -102,7 +129,7 @@ const InstructorDashboard: React.FC = () => {
 
       <main className="max-w-7xl mx-auto px-6 py-8">
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-5 mb-8">
           {/* Total Classes */}
           <div className="academic-card p-5">
             <div className="flex items-center justify-between mb-3">
@@ -156,6 +183,23 @@ const InstructorDashboard: React.FC = () => {
             <div className="space-y-1">
               <p className="text-3xl font-bold text-academic-900">{activeExams}</p>
               <p className="text-academic-600 text-sm">Đang hoạt động</p>
+            </div>
+          </div>
+
+          {/* AI Models Status (NEW) */}
+          <div className="academic-card p-5 border-l-4 border-green-500">
+            <div className="flex items-center justify-between mb-3">
+              <div className="p-2 bg-green-100 rounded-lg">
+                <Video className="text-green-600" size={20} />
+              </div>
+              <div className="text-academic-400 text-sm">AI Anticheat</div>
+            </div>
+            <div className="space-y-1">
+              <p className="text-3xl font-bold text-academic-900">{activeAIModels}</p>
+              <p className="text-green-600 text-sm font-medium flex items-center gap-1">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                Operational
+              </p>
             </div>
           </div>
         </div>
@@ -283,11 +327,21 @@ const InstructorDashboard: React.FC = () => {
               </span>
               Lớp Học Của Tôi
             </h2>
-            {instructorClasses.length > 0 && (
-              <span className="bg-purple-100 text-purple-700 px-4 py-2 rounded-full text-sm font-semibold">
-                {instructorClasses.length} lớp
-              </span>
-            )}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleRefreshClasses}
+                disabled={isRefreshing || isLoading}
+                className={`p-2 text-gray-500 hover:text-purple-600 rounded-lg hover:bg-purple-50 transition ${isRefreshing ? 'animate-spin' : ''}`}
+                title="Làm mới danh sách"
+              >
+                <RefreshCw size={20} />
+              </button>
+              {instructorClasses.length > 0 && (
+                <span className="bg-purple-100 text-purple-700 px-4 py-2 rounded-full text-sm font-semibold">
+                  {instructorClasses.length} lớp
+                </span>
+              )}
+            </div>
           </div>
 
           {instructorClasses.length === 0 ? (
@@ -435,8 +489,11 @@ const InstructorDashboard: React.FC = () => {
 
       {/* Create Class Modal */}
       {showCreateClass && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl transform transition">
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-[9999] p-4" onClick={() => setShowCreateClass(false)}>
+          <div
+            className="bg-white rounded-2xl max-w-md w-full shadow-2xl transform transition"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="bg-gradient-to-r from-purple-500 to-indigo-600 p-6 text-white rounded-t-2xl">
               <h2 className="text-2xl font-bold flex items-center gap-2">
                 <Plus className="w-8 h-8" />
@@ -454,6 +511,7 @@ const InstructorDashboard: React.FC = () => {
                   onChange={(e) => setClassName(e.target.value)}
                   className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:ring-4 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition"
                   placeholder="Ví dụ: Toán Cao Cấp A1"
+                  autoFocus
                 />
               </div>
               <div>

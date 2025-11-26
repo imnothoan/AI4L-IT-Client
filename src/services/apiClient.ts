@@ -131,13 +131,13 @@ class ApiClient {
     const response = await this.client.post<ApiResponse<{ token: string }>>('/auth/refresh', {
       refreshToken: this.refreshToken,
     });
-    
+
     if (response.data.success && response.data.data) {
       this.token = response.data.data.token;
       localStorage.setItem('accessToken', this.token);
       return this.token;
     }
-    
+
     throw new Error('Failed to refresh token');
   }
 
@@ -149,12 +149,12 @@ class ApiClient {
       password,
       role,
     });
-    
+
     if (response.data.success && response.data.data) {
       this.saveTokens(response.data.data.token, response.data.data.refreshToken);
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Login failed');
   }
 
@@ -165,12 +165,12 @@ class ApiClient {
       name,
       role,
     });
-    
+
     if (response.data.success && response.data.data) {
       this.saveTokens(response.data.data.token, response.data.data.refreshToken);
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Registration failed');
   }
 
@@ -186,11 +186,11 @@ class ApiClient {
 
   async getCurrentUser(): Promise<User> {
     const response = await this.client.get<ApiResponse<User>>('/auth/me');
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get current user');
   }
 
@@ -198,21 +198,21 @@ class ApiClient {
 
   async getUser(userId: string): Promise<User> {
     const response = await this.client.get<ApiResponse<User>>(`/users/${userId}`);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get user');
   }
 
   async updateUser(userId: string, updates: Partial<User>): Promise<User> {
     const response = await this.client.put<ApiResponse<User>>(`/users/${userId}`, updates);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to update user');
   }
 
@@ -225,37 +225,37 @@ class ApiClient {
 
   async createExam(exam: Omit<Exam, 'id' | 'createdAt'>): Promise<Exam> {
     const response = await this.client.post<ApiResponse<Exam>>('/exams', exam);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to create exam');
   }
 
   async getExam(examId: string): Promise<Exam> {
     const response = await this.client.get<ApiResponse<Exam>>(`/exams/${examId}`);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get exam');
   }
 
   async updateExam(examId: string, updates: Partial<Exam>): Promise<Exam> {
     const response = await this.client.put<ApiResponse<Exam>>(`/exams/${examId}`, updates);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to update exam');
   }
 
   async deleteExam(examId: string): Promise<void> {
     const response = await this.client.delete<ApiResponse>(`/exams/${examId}`);
-    
+
     if (!response.data.success) {
       throw new Error(response.data.error || 'Failed to delete exam');
     }
@@ -265,31 +265,31 @@ class ApiClient {
     const response = await this.client.get<ApiResponse<PaginatedResponse<Exam>>>(`/exams/instructor/${instructorId}`, {
       params: { page, pageSize },
     });
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get exams');
   }
 
   async getExamsByClass(classId: string): Promise<Exam[]> {
     const response = await this.client.get<ApiResponse<Exam[]>>(`/exams/class/${classId}`);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get exams');
   }
 
   async getAvailableExamsForStudent(studentId: string): Promise<Exam[]> {
     const response = await this.client.get<ApiResponse<Exam[]>>(`/exams/student/${studentId}/available`);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get available exams');
   }
 
@@ -297,37 +297,37 @@ class ApiClient {
 
   async createClass(classData: Omit<Class, 'id' | 'createdAt'>): Promise<Class> {
     const response = await this.client.post<ApiResponse<Class>>('/classes', classData);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to create class');
   }
 
   async getClass(classId: string): Promise<Class> {
     const response = await this.client.get<ApiResponse<Class>>(`/classes/${classId}`);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get class');
   }
 
   async updateClass(classId: string, updates: Partial<Class>): Promise<Class> {
     const response = await this.client.put<ApiResponse<Class>>(`/classes/${classId}`, updates);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to update class');
   }
 
   async deleteClass(classId: string): Promise<void> {
     const response = await this.client.delete<ApiResponse>(`/classes/${classId}`);
-    
+
     if (!response.data.success) {
       throw new Error(response.data.error || 'Failed to delete class');
     }
@@ -335,33 +335,43 @@ class ApiClient {
 
   async getClassesByInstructor(instructorId: string): Promise<Class[]> {
     const response = await this.client.get<ApiResponse<Class[]>>(`/classes/instructor/${instructorId}`);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get classes');
+  }
+
+  async getClassesByStudent(studentId: string): Promise<Class[]> {
+    const response = await this.client.get<ApiResponse<Class[]>>(`/classes/student/${studentId}`);
+
+    if (response.data.success && response.data.data) {
+      return response.data.data;
+    }
+
+    throw new Error(response.data.error || 'Failed to get student classes');
   }
 
   async addStudentToClass(classId: string, studentId: string): Promise<Class> {
     const response = await this.client.post<ApiResponse<Class>>(`/classes/${classId}/students`, {
       studentId,
     });
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to add student to class');
   }
 
   async removeStudentFromClass(classId: string, studentId: string): Promise<Class> {
     const response = await this.client.delete<ApiResponse<Class>>(`/classes/${classId}/students/${studentId}`);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to remove student from class');
   }
 
@@ -369,37 +379,37 @@ class ApiClient {
 
   async createQuestion(question: Omit<Question, 'id' | 'createdAt' | 'updatedAt'>): Promise<Question> {
     const response = await this.client.post<ApiResponse<Question>>('/questions', question);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to create question');
   }
 
   async getQuestion(questionId: string): Promise<Question> {
     const response = await this.client.get<ApiResponse<Question>>(`/questions/${questionId}`);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get question');
   }
 
   async updateQuestion(questionId: string, updates: Partial<Question>): Promise<Question> {
     const response = await this.client.put<ApiResponse<Question>>(`/questions/${questionId}`, updates);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to update question');
   }
 
   async deleteQuestion(questionId: string): Promise<void> {
     const response = await this.client.delete<ApiResponse>(`/questions/${questionId}`);
-    
+
     if (!response.data.success) {
       throw new Error(response.data.error || 'Failed to delete question');
     }
@@ -416,11 +426,11 @@ class ApiClient {
     const response = await this.client.get<ApiResponse<PaginatedResponse<Question>>>('/questions/search', {
       params: filters,
     });
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to search questions');
   }
 
@@ -428,31 +438,31 @@ class ApiClient {
 
   async startExamAttempt(examId: string): Promise<ExamAttempt> {
     const response = await this.client.post<ApiResponse<ExamAttempt>>(`/exams/${examId}/attempts`);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to start exam attempt');
   }
 
   async getExamAttempt(attemptId: string): Promise<ExamAttempt> {
     const response = await this.client.get<ApiResponse<ExamAttempt>>(`/attempts/${attemptId}`);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get exam attempt');
   }
 
   async updateExamAttempt(attemptId: string, updates: Partial<ExamAttempt>): Promise<ExamAttempt> {
     const response = await this.client.put<ApiResponse<ExamAttempt>>(`/attempts/${attemptId}`, updates);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to update exam attempt');
   }
 
@@ -460,31 +470,31 @@ class ApiClient {
     const response = await this.client.post<ApiResponse<ExamAttempt>>(`/attempts/${attemptId}/submit`, {
       answers,
     });
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to submit exam attempt');
   }
 
   async getAttemptsByExam(examId: string): Promise<ExamAttempt[]> {
     const response = await this.client.get<ApiResponse<ExamAttempt[]>>(`/exams/${examId}/attempts`);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get exam attempts');
   }
 
   async getAttemptsByStudent(studentId: string): Promise<ExamAttempt[]> {
     const response = await this.client.get<ApiResponse<ExamAttempt[]>>(`/students/${studentId}/attempts`);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get student attempts');
   }
 
@@ -492,53 +502,63 @@ class ApiClient {
 
   async reportCheatWarning(attemptId: string, warning: Omit<CheatWarning, 'id'>): Promise<CheatWarning> {
     const response = await this.client.post<ApiResponse<CheatWarning>>(`/attempts/${attemptId}/warnings`, warning);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to report warning');
   }
 
   async getActiveExamSessions(examId: string): Promise<ExamAttempt[]> {
     const response = await this.client.get<ApiResponse<ExamAttempt[]>>(`/exams/${examId}/sessions/active`);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get active sessions');
   }
 
   async getFlaggedAttempts(examId: string): Promise<ExamAttempt[]> {
     const response = await this.client.get<ApiResponse<ExamAttempt[]>>(`/exams/${examId}/attempts/flagged`);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get flagged attempts');
+  }
+
+  async getAnticheatStatus(): Promise<any> {
+    const response = await this.client.get<ApiResponse<any>>('/anticheat/status');
+
+    if (response.data.success && response.data.data) {
+      return response.data.data;
+    }
+
+    throw new Error(response.data.error || 'Failed to get anticheat status');
   }
 
   // ============ Analytics ============
 
   async getExamStatistics(examId: string): Promise<ExamStatistics> {
     const response = await this.client.get<ApiResponse<ExamStatistics>>(`/exams/${examId}/statistics`);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get exam statistics');
   }
 
   async getQuestionAnalytics(examId: string): Promise<any> {
     const response = await this.client.get<ApiResponse<any>>(`/exams/${examId}/analytics/questions`);
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get question analytics');
   }
 
@@ -546,11 +566,11 @@ class ApiClient {
     const response = await this.client.get<ApiResponse<any>>(`/students/${studentId}/performance`, {
       params: { timeRange },
     });
-    
+
     if (response.data.success && response.data.data) {
       return response.data.data;
     }
-    
+
     throw new Error(response.data.error || 'Failed to get student performance');
   }
 
@@ -559,14 +579,14 @@ class ApiClient {
   createWebSocket(path: string): WebSocket {
     const wsUrl = API_BASE_URL.replace(/^http/, 'ws').replace('/api', '') + path;
     const ws = new WebSocket(wsUrl);
-    
+
     // Add authentication
     ws.addEventListener('open', () => {
       if (this.token) {
         ws.send(JSON.stringify({ type: 'auth', token: this.token }));
       }
     });
-    
+
     return ws;
   }
 

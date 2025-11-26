@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '@/store';
 import { Question } from '@/types';
+import { geminiService } from '@/services/geminiService';
+
 import { aiQuestionGenerator } from '@/services/aiQuestionGenerator';
 import { Sparkles } from 'lucide-react';
 
@@ -33,6 +35,14 @@ const ExamCreator: React.FC = () => {
       return;
     }
 
+    // Check if AI service is available
+    if (!geminiService.isAvailable()) {
+      const proceed = window.confirm(
+        'Gemini API Key is missing or invalid. The system will use mock questions instead. Do you want to proceed?'
+      );
+      if (!proceed) return;
+    }
+
     setIsGenerating(true);
     try {
       const generated = await aiQuestionGenerator.generateQuestions(
@@ -41,11 +51,16 @@ const ExamCreator: React.FC = () => {
         generationDifficulty,
         questionType
       );
+
+      if (generated.length === 0) {
+        throw new Error('No questions were generated. Please try a different topic.');
+      }
+
       setQuestions([...questions, ...generated]);
       setGenerationTopic('');
     } catch (error) {
       console.error('Error generating questions:', error);
-      alert('Failed to generate questions. Using demo questions instead.');
+      alert(`Failed to generate questions: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsGenerating(false);
     }

@@ -173,9 +173,10 @@ export interface ExamAttempt {
 export interface CheatWarning {
   id: string;
   attemptId: string;
-  type: 'look-away' | 'multiple-faces' | 'no-face' | 'tab-switch';
+  type: 'look-away' | 'multiple-faces' | 'no-face' | 'tab-switch' | 'forbidden-object' | 'fullscreen-exit';
   timestamp: Date;
   severity: 'low' | 'medium' | 'high';
+  message?: string;
   snapshot?: string; // base64 image
 }
 
