@@ -28,17 +28,35 @@ const ClassManagement: React.FC = () => {
     );
   }
 
-  const handleAddStudent = () => {
+  const handleAddStudent = async () => {
     if (!studentEmail) {
       alert('Please enter a student email');
       return;
     }
 
-    // Mock student ID generation - in production, this would look up the student
-    const studentId = `student-${Date.now()}`;
-    addStudentToClass(classData.id, studentId);
-    setShowAddStudent(false);
-    setStudentEmail('');
+    try {
+      // Look up student by email
+      const { apiClient } = await import('@/services/apiClient');
+      const student = await apiClient.getUserByEmail(studentEmail);
+
+      if (!student) {
+        alert('Student not found with this email');
+        return;
+      }
+
+      if (student.role !== 'student') {
+        alert('User is not a student');
+        return;
+      }
+
+      await addStudentToClass(classData.id, student.id);
+      setShowAddStudent(false);
+      setStudentEmail('');
+      alert('Student added successfully');
+    } catch (error) {
+      console.error('Error adding student:', error);
+      alert('Failed to add student. Please try again.');
+    }
   };
 
   return (

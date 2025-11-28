@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useStore } from '../store';
+import { apiClient } from '../services/apiClient';
 
 interface StudentSession {
     id: string;
@@ -84,21 +85,8 @@ export const ProctorLiveDashboard: React.FC = () => {
     useEffect(() => {
         const fetchSessions = async () => {
             try {
-                // Mock data for now - replace with actual API call
-                const mockSessions: StudentSession[] = Array.from({ length: 12 }).map((_, i) => ({
-                    id: `session-${i}`,
-                    studentName: `Student ${i + 1}`,
-                    examTitle: 'Math Adaptive Test',
-                    currentTheta: -1.5 + Math.random() * 3,
-                    standardError: 0.3 + Math.random() * 0.7,
-                    questionsAnswered: Math.floor(Math.random() * 15) + 5,
-                    cheatWarnings: Math.floor(Math.random() * 5),
-                    webcamStatus: i % 3 === 0 ? 'inactive' : 'active',
-                    screenStatus: i % 5 === 0 ? 'tab-switch' : 'normal',
-                    startedAt: new Date(Date.now() - Math.random() * 3600000).toISOString(),
-                    lastActivity: new Date(Date.now() - Math.random() * 60000).toISOString()
-                }));
-                setActiveSessions(mockSessions);
+                const sessions = await apiClient.getAllActiveSessions();
+                setActiveSessions(sessions);
             } catch (error) {
                 console.error('Failed to fetch sessions:', error);
             }
@@ -207,7 +195,7 @@ export const ProctorLiveDashboard: React.FC = () => {
                     <div
                         key={session.id}
                         className={`bg-white rounded-lg shadow p-4 border-l-4 ${session.cheatWarnings > 3 ? 'border-red-500' :
-                                session.cheatWarnings > 0 ? 'border-yellow-500' : 'border-green-500'
+                            session.cheatWarnings > 0 ? 'border-yellow-500' : 'border-green-500'
                             }`}
                     >
                         {/* Student Info */}

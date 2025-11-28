@@ -1,27 +1,25 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Webcam from 'react-webcam';
-import { faceDetectionService } from '../services/FaceDetectionService';
-import { objectDetectionService } from '../services/ObjectDetectionService';
+import { antiCheatService } from '../services/antiCheatService';
 import { websocketService } from '../services/websocketService';
 import { AlertTriangle, Eye, Smartphone, Users } from 'lucide-react';
+import { CheatWarning } from '@/types';
 
 interface ExamProctorProps {
     examId: string;
     attemptId: string;
+    onCheatWarning?: (warning: CheatWarning) => void;
 }
 
-export const ExamProctor: React.FC<ExamProctorProps> = ({ examId, attemptId }) => {
+export const ExamProctor: React.FC<ExamProctorProps> = ({ examId, attemptId, onCheatWarning }) => {
     const webcamRef = useRef<Webcam>(null);
     const [isMonitoring, setIsMonitoring] = useState(false);
     const [warnings, setWarnings] = useState<string[]>([]);
     const [lastWarningTime, setLastWarningTime] = useState(0);
 
-    // Removed unused currentUser
-
     useEffect(() => {
-        const loadModels = async () => {
-            await faceDetectionService.loadModel();
-            await objectDetectionService.loadModel();
+        const init = async () => {
+            await antiCheatService.initialize();
             setIsMonitoring(true);
 
             // Ensure WebSocket is connected for this exam
@@ -29,7 +27,11 @@ export const ExamProctor: React.FC<ExamProctorProps> = ({ examId, attemptId }) =
                 websocketService.connect(examId);
             }
         };
-        loadModels();
+        init();
+
+        return () => {
+            antiCheatService.dispose();
+        };
     }, [examId]);
 
     useEffect(() => {
@@ -40,61 +42,35 @@ export const ExamProctor: React.FC<ExamProctorProps> = ({ examId, attemptId }) =
                 if (webcamRef.current && webcamRef.current.video && webcamRef.current.video.readyState === 4) {
                     const video = webcamRef.current.video;
 
-                    // 1. Face Detection with Gaze Tracking
-                    const faceResult = await faceDetectionService.detect(video);
+                    // Run Anti-Cheat Analysis
+                    const warning = await antiCheatService.analyzeFrame(video, attemptId);
 
-                    // 2. Object Detection
-                    const objectResult = await objectDetectionService.detect(video);
+                    if (warning) {
+                        setWarnings(prev => [warning.message || warning.type, ...prev].slice(0, 3));
 
-                    // Analyze Results
-                    const currentWarnings: string[] = [];
+                        // Notify Parent
+                        if (onCheatWarning) {
+                            onCheatWarning(warning);
+                        }
 
-                    if (faceResult?.status === 'NO_FACE') {
-                        currentWarnings.push('Face not detected');
-                    } else if (faceResult?.status === 'MULTIPLE_FACES') {
-                        currentWarnings.push('Multiple people detected');
-                    } else if (faceResult?.status === 'GAZE_WARNING' && faceResult.data?.warning) {
-                        // Real gaze tracking warning
-                        currentWarnings.push(faceResult.data.warning);
-                    }
-
-                    // Fix type checking for objectResult
-                    // objectResult can be { status: 'OK' } or { status: 'FORBIDDEN_OBJECT', objects: string[] } or [] (initial simulation)
-                    if (!Array.isArray(objectResult) && objectResult.status === 'FORBIDDEN_OBJECT' && 'objects' in objectResult && objectResult.objects) {
-                        currentWarnings.push(`Forbidden object: ${objectResult.objects.join(', ')}`);
-                    }
-
-                    setWarnings(currentWarnings);
-
-                    // Report to Server (Throttle: max 1 warning per 5 seconds to avoid spam)
-                    if (currentWarnings.length > 0 && Date.now() - lastWarningTime > 5000) {
-                        // Determine primary warning type
-                        let warningType: any = 'look-away'; // Default
-                        if (currentWarnings.some(w => w.includes('Face not detected'))) warningType = 'no-face';
-                        else if (currentWarnings.some(w => w.includes('Multiple'))) warningType = 'multiple-faces';
-                        else if (currentWarnings.some(w => w.includes('Forbidden'))) warningType = 'forbidden-object';
-                        else if (currentWarnings.some(w => w.includes('phone'))) warningType = 'phone-detected';
-                        else if (currentWarnings.some(w => w.includes('away'))) warningType = 'gaze-away';
-
-                        websocketService.reportCheatWarning({
-                            attemptId,
-                            warning: {
-                                id: crypto.randomUUID(),
+                        // Report to Server (Throttle: max 1 warning per 5 seconds)
+                        if (Date.now() - lastWarningTime > 5000) {
+                            websocketService.reportCheatWarning({
                                 attemptId,
-                                type: warningType,
-                                severity: 'high',
-                                message: currentWarnings.join(', '),
-                                timestamp: new Date()
-                            }
-                        });
-                        setLastWarningTime(Date.now());
+                                warning
+                            });
+                            setLastWarningTime(Date.now());
+                        }
+                    } else {
+                        // Clear warnings if safe (optional, or keep history)
+                        // setWarnings([]); 
                     }
                 }
             }, 1000); // Check every second
         }
 
         return () => clearInterval(intervalId);
-    }, [isMonitoring, attemptId, lastWarningTime]);
+    }, [isMonitoring, attemptId, lastWarningTime, onCheatWarning]);
 
     // Tab Switching & Fullscreen Detection
     useEffect(() => {
@@ -103,38 +79,38 @@ export const ExamProctor: React.FC<ExamProctorProps> = ({ examId, attemptId }) =
         const handleVisibilityChange = () => {
             if (document.hidden) {
                 const warningMsg = 'Tab switch detected';
-                setWarnings(prev => [...prev, warningMsg]);
+                setWarnings(prev => [warningMsg, ...prev]);
 
-                websocketService.reportCheatWarning({
+                const warning: CheatWarning = {
+                    id: crypto.randomUUID(),
                     attemptId,
-                    warning: {
-                        id: crypto.randomUUID(),
-                        attemptId,
-                        type: 'tab-switch',
-                        severity: 'high',
-                        message: warningMsg,
-                        timestamp: new Date()
-                    }
-                });
+                    type: 'tab-switch',
+                    severity: 'high',
+                    message: warningMsg,
+                    timestamp: new Date()
+                };
+
+                if (onCheatWarning) onCheatWarning(warning);
+                websocketService.reportCheatWarning({ attemptId, warning });
             }
         };
 
         const handleFullscreenChange = () => {
             if (!document.fullscreenElement) {
                 const warningMsg = 'Exited fullscreen mode';
-                setWarnings(prev => [...prev, warningMsg]);
+                setWarnings(prev => [warningMsg, ...prev]);
 
-                websocketService.reportCheatWarning({
+                const warning: CheatWarning = {
+                    id: crypto.randomUUID(),
                     attemptId,
-                    warning: {
-                        id: crypto.randomUUID(),
-                        attemptId,
-                        type: 'fullscreen-exit',
-                        severity: 'high',
-                        message: warningMsg,
-                        timestamp: new Date()
-                    }
-                });
+                    type: 'fullscreen-exit',
+                    severity: 'high',
+                    message: warningMsg,
+                    timestamp: new Date()
+                };
+
+                if (onCheatWarning) onCheatWarning(warning);
+                websocketService.reportCheatWarning({ attemptId, warning });
             }
         };
 
@@ -145,7 +121,7 @@ export const ExamProctor: React.FC<ExamProctorProps> = ({ examId, attemptId }) =
             document.removeEventListener('visibilitychange', handleVisibilityChange);
             document.removeEventListener('fullscreenchange', handleFullscreenChange);
         };
-    }, [isMonitoring, attemptId]);
+    }, [isMonitoring, attemptId, onCheatWarning]);
 
     const enterFullscreen = () => {
         document.documentElement.requestFullscreen().catch(err => {
@@ -191,20 +167,20 @@ export const ExamProctor: React.FC<ExamProctorProps> = ({ examId, attemptId }) =
                     {warnings.length > 0 && (
                         <div className="absolute inset-0 bg-red-500/50 flex flex-col items-center justify-center text-white p-2 text-center animate-pulse">
                             <AlertTriangle className="w-8 h-8 mb-2" />
-                            <p className="text-xs font-bold">{warnings.slice(-1)[0]}</p>
+                            <p className="text-xs font-bold">{warnings[0]}</p>
                         </div>
                     )}
                 </div>
 
                 <div className="p-2 bg-gray-50 text-xs text-gray-500">
                     <div className="flex items-center gap-2 mb-1">
-                        <Eye className="w-3 h-3" /> Gaze: {warnings.some(w => w.includes('Looking') || w.includes('phone')) ? '⚠️ Off-screen' : '✓ On-screen'}
+                        <Eye className="w-3 h-3" /> Gaze: {warnings.some(w => w.includes('look-away') || w.includes('phone')) ? '⚠️ Off-screen' : '✓ On-screen'}
                     </div>
                     <div className="flex items-center gap-2 mb-1">
-                        <Users className="w-3 h-3" /> Face: {warnings.includes('Multiple people detected') ? '⚠️ Multiple' : warnings.includes('Face not detected') ? '⚠️ None' : '✓ Single'}
+                        <Users className="w-3 h-3" /> Face: {warnings.some(w => w.includes('multiple')) ? '⚠️ Multiple' : warnings.some(w => w.includes('no-face')) ? '⚠️ None' : '✓ Single'}
                     </div>
                     <div className="flex items-center gap-2">
-                        <Smartphone className="w-3 h-3" /> Objects: {warnings.some(w => w.includes('Forbidden') || w.includes('phone')) ? '⚠️ Detected' : '✓ Clear'}
+                        <Smartphone className="w-3 h-3" /> Objects: {warnings.some(w => w.includes('forbidden')) ? '⚠️ Detected' : '✓ Clear'}
                     </div>
                 </div>
             </div>

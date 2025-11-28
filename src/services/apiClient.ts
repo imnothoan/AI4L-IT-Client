@@ -437,7 +437,7 @@ class ApiClient {
   // ============ Exam Attempt Operations ============
 
   async startExamAttempt(examId: string): Promise<ExamAttempt> {
-    const response = await this.client.post<ApiResponse<ExamAttempt>>(`/exams/${examId}/attempts`);
+    const response = await this.client.post<ApiResponse<ExamAttempt>>('/attempts', { examId });
 
     if (response.data.success && response.data.data) {
       return response.data.data;
@@ -478,6 +478,26 @@ class ApiClient {
     throw new Error(response.data.error || 'Failed to submit exam attempt');
   }
 
+  async completeExamAttempt(attemptId: string): Promise<ExamAttempt> {
+    const response = await this.client.post<ApiResponse<ExamAttempt>>(`/attempts/${attemptId}/complete`);
+
+    if (response.data.success && response.data.data) {
+      return response.data.data;
+    }
+
+    throw new Error(response.data.error || 'Failed to complete exam attempt');
+  }
+
+  async getNextQuestion(attemptId: string): Promise<Question | null> {
+    const response = await this.client.get<ApiResponse<Question | null>>(`/attempts/${attemptId}/next-question`);
+
+    if (response.data.success) {
+      return response.data.data || null;
+    }
+
+    throw new Error(response.data.error || 'Failed to get next question');
+  }
+
   async getAttemptsByExam(examId: string): Promise<ExamAttempt[]> {
     const response = await this.client.get<ApiResponse<ExamAttempt[]>>(`/exams/${examId}/attempts`);
 
@@ -496,6 +516,16 @@ class ApiClient {
     }
 
     throw new Error(response.data.error || 'Failed to get student attempts');
+  }
+
+  async getInstructorAttempts(): Promise<ExamAttempt[]> {
+    const response = await this.client.get<ApiResponse<ExamAttempt[]>>('/attempts/instructor');
+
+    if (response.data.success && response.data.data) {
+      return response.data.data;
+    }
+
+    throw new Error(response.data.error || 'Failed to get instructor attempts');
   }
 
   // ============ Anti-Cheat & Monitoring ============
@@ -518,6 +548,17 @@ class ApiClient {
     }
 
     throw new Error(response.data.error || 'Failed to get active sessions');
+  }
+
+  async getAllActiveSessions(): Promise<any[]> {
+    const response = await this.client.get<ApiResponse<any[]>>('/anticheat/sessions');
+
+    if (response.data.success && response.data.data) {
+      // @ts-ignore - API returns { sessions: [] } but typed as data
+      return response.data.sessions || response.data.data;
+    }
+
+    throw new Error(response.data.error || 'Failed to get all active sessions');
   }
 
   async getFlaggedAttempts(examId: string): Promise<ExamAttempt[]> {

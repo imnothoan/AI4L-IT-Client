@@ -40,9 +40,21 @@ const LoginPage: React.FC = () => {
         await login(email, password, role);
         navigate(role === 'instructor' ? '/instructor' : '/student');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Authentication error:', error);
-      // Error is already set in store by login/register actions
+
+      // Broad check for 409 Conflict
+      const isConflict =
+        (error.response && error.response.status === 409) ||
+        (error.message && error.message.includes('409')) ||
+        (JSON.stringify(error).includes('409'));
+
+      if (isConflict) {
+        alert('Email này đã được sử dụng. Vui lòng dùng email khác hoặc đăng nhập.');
+      } else {
+        // Generic error
+        alert(error.message || 'Đã có lỗi xảy ra. Vui lòng thử lại.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -127,6 +139,7 @@ const LoginPage: React.FC = () => {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Error Message Display */}
+            {/* Error Message Display */}
             {error && (
               <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4 rounded-r">
                 <div className="flex">
@@ -136,8 +149,10 @@ const LoginPage: React.FC = () => {
                     </svg>
                   </div>
                   <div className="ml-3">
-                    <p className="text-sm text-red-700">
-                      {error}
+                    <p className="text-sm text-red-700 font-medium">
+                      {error.includes('409') || error.toLowerCase().includes('conflict')
+                        ? 'Email này đã được sử dụng. Vui lòng đăng nhập hoặc dùng email khác.'
+                        : error}
                     </p>
                   </div>
                 </div>

@@ -4,13 +4,14 @@ import { useStore } from '../store';
 import { ExamProctor } from '../components/ExamProctor';
 // import { ThetaChart } from '../components/ThetaChart';
 import CATAlgorithm from '../algorithms/CATAlgorithm';
-// import { apiClient } from '../services/apiClient';
+import { apiClient } from '../services/apiClient';
 import { Question, CheatWarning } from '@/types';
 import {
   FileTextIcon, ZapIcon, BookOpenIcon, ChartBarIcon, LightbulbIcon,
   AlertCircleIcon
 } from '@/components/icons/AcademicIcons';
 import { ClipboardList, AlertTriangle, Check, Keyboard, Rocket, Star } from 'lucide-react';
+import { antiCheatService } from '../services/antiCheatService';
 
 const ExamTaking: React.FC = () => {
   const { examId } = useParams<{ examId: string }>();
@@ -39,10 +40,31 @@ const ExamTaking: React.FC = () => {
   // const [isMonitoringActive, setIsMonitoringActive] = useState(false);
   const [questionStartTime, setQuestionStartTime] = useState(Date.now());
 
+  // Initialize Anti-Cheat
+  useEffect(() => {
+    antiCheatService.initialize();
+    return () => {
+      antiCheatService.dispose();
+    };
+  }, []);
+
+  const handleCheatWarning = useCallback(async (warning: CheatWarning) => {
+    setWarnings(prev => [warning, ...prev]);
+
+    // Send to server
+    try {
+      if (attemptId) {
+        await apiClient.reportCheatWarning(attemptId, warning);
+      }
+    } catch (error) {
+      console.error('Failed to report warning:', error);
+    }
+  }, [attemptId]);
+
   // New state for enhanced features
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showInstructions, setShowInstructions] = useState(true);
-  const [bookmarkedQuestions, setBookmarkedQuestions] = useState<Set<string>>(new Set());
+  const [bookmarkedQuestions, setBookmarkedQuestions] = new Set();
   const [autoSaveStatus, setAutoSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
 
   // Initialize exam attempt

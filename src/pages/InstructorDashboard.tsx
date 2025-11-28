@@ -3,24 +3,26 @@ import { useNavigate } from 'react-router-dom';
 import { useStore } from '@/store';
 import {
   UserTeacherIcon, BuildingIcon, FileTextIcon, ChartBarIcon, ActivityIcon,
-  ZapIcon, PlusCircleIcon, EyeIcon, LibraryIcon
+  ZapIcon, PlusCircleIcon, EyeIcon, LibraryIcon, VideoIcon
 } from '@/components/icons/AcademicIcons';
 import { Plus, BookOpen, Cloud, School, FileText, Video, Check, RefreshCw } from 'lucide-react';
 
 const InstructorDashboard: React.FC = () => {
   const navigate = useNavigate();
-  const { currentUser, logout, classes, exams, examAttempts, createClass, loadClassesByInstructor, isLoading } = useStore();
+  const { currentUser, logout, classes, exams, examAttempts, createClass, loadClassesByInstructor, loadExamsByInstructor, loadInstructorAttempts, isLoading } = useStore();
   const [showCreateClass, setShowCreateClass] = useState(false);
   const [className, setClassName] = useState('');
   const [classDescription, setClassDescription] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Load classes on mount
+  // Load classes, exams, and attempts on mount
   React.useEffect(() => {
     if (currentUser) {
       loadClassesByInstructor(currentUser.id);
+      loadExamsByInstructor(currentUser.id);
+      loadInstructorAttempts();
     }
-  }, [currentUser, loadClassesByInstructor]);
+  }, [currentUser, loadClassesByInstructor, loadExamsByInstructor, loadInstructorAttempts]);
 
   const handleRefreshClasses = async () => {
     if (currentUser) {
@@ -35,8 +37,11 @@ const InstructorDashboard: React.FC = () => {
     navigate('/login');
   };
 
+  const [createError, setCreateError] = useState<string | null>(null);
+
   const handleCreateClass = async () => {
     if (!currentUser || !className) return;
+    setCreateError(null);
 
     try {
       await createClass({
@@ -49,11 +54,12 @@ const InstructorDashboard: React.FC = () => {
       setShowCreateClass(false);
       setClassName('');
       setClassDescription('');
+      setCreateError(null);
       // Refresh list after creation
       await loadClassesByInstructor(currentUser.id);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating class:', error);
-      alert('Không thể tạo lớp học. Vui lòng thử lại.');
+      setCreateError(error.message || 'Không thể tạo lớp học. Vui lòng thử lại.');
     }
   };
 
@@ -501,6 +507,11 @@ const InstructorDashboard: React.FC = () => {
               </h2>
             </div>
             <div className="p-6 space-y-5">
+              {createError && (
+                <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm font-medium border border-red-200">
+                  {createError}
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
                   Tên Lớp Học
