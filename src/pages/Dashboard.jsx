@@ -5,11 +5,13 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-toastify';
-import { LogOut, FileText, User, PlayCircle, Clock, CheckCircle, AlertCircle, Loader2, BookOpen, Users, GraduationCap, ChevronRight } from 'lucide-react';
+import { LogOut, FileText, User, PlayCircle, Clock, CheckCircle, AlertCircle, Loader2, BookOpen, Users, GraduationCap, ChevronRight, Camera, Shield, Settings } from 'lucide-react';
 import LanguageSwitcher from '../components/LanguageSwitcher';
+import FaceVerification from '../components/FaceVerification';
+import ProfileSettings from '../components/ProfileSettings';
 
 export default function Dashboard() {
-  const { user, profile, profileLoading, logout } = useAuth();
+  const { user, profile, profileLoading, logout, refetchProfile } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
 
@@ -18,6 +20,11 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [profileTimeoutReached, setProfileTimeoutReached] = useState(false);
   const [showClasses, setShowClasses] = useState(true);
+  const [showFaceRegistration, setShowFaceRegistration] = useState(false);
+  const [showProfileSettings, setShowProfileSettings] = useState(false);
+
+  // Derive faceRegistered directly from profile to ensure synchronization
+  const faceRegistered = !!(profile?.face_embedding || profile?.face_enrolled_at);
 
   // Profile loading timeout - prevent infinite waiting
   useEffect(() => {
@@ -25,43 +32,72 @@ export default function Dashboard() {
       setProfileTimeoutReached(false);
       return;
     }
-    
+
     const timeout = setTimeout(() => {
       console.warn('Dashboard: Profile loading timeout reached, proceeding with user metadata');
       setProfileTimeoutReached(true);
     }, 2000);
-    
+
     return () => clearTimeout(timeout);
   }, [profileLoading]);
 
   // Load student's enrolled classes with realtime subscription
   useEffect(() => {
     if (!user) return;
-    
+
     const loadClasses = async () => {
       try {
-        const { data: enrollmentData, error: enrollError } = await supabase
-          .from('enrollments')
-          .select(`
-            id,
-            status,
-            enrolled_at,
-            class:classes(
-              id,
-              name,
-              code,
-              description,
-              semester,
-              academic_year,
-              instructor:profiles!classes_instructor_id_fkey(full_name, email)
-            )
-          `)
-          .eq('student_id', user.id)
-          .order('enrolled_at', { ascending: false });
+        if (import.meta.env.DEV) {
+          console.log('[Dashboard] Loading enrolled classes for user:', user.id);
+        }
 
-        if (enrollError) throw enrollError;
-        
-        setClasses(enrollmentData || []);
+        // Try RPC first for reliable data loading (bypasses RLS join issues)
+        let enrollmentData = [];
+        try {
+          const { data: rpcResult, error: rpcError } = await supabase.rpc('get_my_enrollments');
+
+          if (!rpcError && rpcResult?.success) {
+            enrollmentData = rpcResult.enrollments || [];
+            if (import.meta.env.DEV) {
+              console.log('[Dashboard] Loaded enrollments via RPC:', enrollmentData.length, enrollmentData);
+            }
+          } else {
+            throw new Error(rpcError?.message || rpcResult?.error || 'Failed to load enrollments via RPC function');
+          }
+        } catch (rpcErr) {
+          console.warn('[Dashboard] RPC get_my_enrollments failed, trying direct query:', rpcErr.message);
+          // Fallback to direct query
+          const { data: directData, error: enrollError } = await supabase
+            .from('enrollments')
+            .select(`
+              id,
+              status,
+              enrolled_at,
+              class:classes(
+                id,
+                name,
+                code,
+                description,
+                semester,
+                academic_year,
+                instructor:profiles!classes_instructor_id_fkey(full_name, email)
+              )
+            `)
+            .eq('student_id', user.id)
+            .order('enrolled_at', { ascending: false });
+
+          if (enrollError) {
+            console.error('[Dashboard] Error loading enrollments:', enrollError);
+            throw enrollError;
+          }
+
+          enrollmentData = directData || [];
+          if (import.meta.env.DEV) {
+            console.log('[Dashboard] Loaded enrollments via direct query:', enrollmentData.length, enrollmentData);
+          }
+        }
+
+        setClasses(enrollmentData);
       } catch (err) {
         console.error('Load classes error:', err);
       }
@@ -101,16 +137,16 @@ export default function Dashboard() {
         setLoading(false);
         return;
       }
-      
+
       // Wait for profile to load OR timeout to be reached
       if (profileLoading && !profile && !profileTimeoutReached) {
         return;
       }
-      
+
       // Check role from profile or user metadata (fallback)
       const userRole = profile?.role || user?.user_metadata?.role || 'student';
       const isInstructorUser = userRole === 'instructor' || userRole === 'admin';
-      
+
       // Dashboard is only for students - instructors should be redirected
       if (isInstructorUser) {
         setLoading(false);
@@ -276,12 +312,17 @@ export default function Dashboard() {
             SmartExam<span className="text-primary">Pro</span>
           </span>
         </div>
-        <div className="flex items-center space-x-6">
+        <div className="flex items-center space-x-4">
           <LanguageSwitcher compact />
-          <div className="flex items-center space-x-2 text-sm font-medium text-gray-600 bg-gray-100 px-3 py-1.5 rounded-full">
+          <button
+            onClick={() => setShowProfileSettings(true)}
+            className="flex items-center space-x-2 text-sm font-medium text-gray-600 bg-gray-100 px-3 py-1.5 rounded-full hover:bg-gray-200 transition-colors cursor-pointer"
+            title={t('profile.settings') || 'Cài đặt tài khoản'}
+          >
             <User className="w-4 h-4" />
             <span>{profile?.full_name || user?.email}</span>
-          </div>
+            <Settings className="w-3.5 h-3.5 text-gray-400" />
+          </button>
           <button
             onClick={handleLogout}
             className="flex items-center space-x-2 text-danger hover:bg-danger-50 px-4 py-2 rounded-lg transition-colors text-sm font-semibold"
@@ -291,6 +332,12 @@ export default function Dashboard() {
           </button>
         </div>
       </nav>
+
+      {/* Profile Settings Modal */}
+      <ProfileSettings
+        isOpen={showProfileSettings}
+        onClose={() => setShowProfileSettings(false)}
+      />
 
       {/* Content */}
       <motion.div
@@ -308,13 +355,136 @@ export default function Dashboard() {
           </p>
         </div>
 
+        {/* Face Registration Section */}
+        <motion.div
+          variants={itemVariants}
+          className="mb-8"
+        >
+          <div className="bg-paper rounded-xl border border-gray-100 p-6 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center space-x-3">
+                <div className={`p-3 rounded-full ${faceRegistered ? 'bg-success-100' : 'bg-warning-100'}`}>
+                  {faceRegistered ? (
+                    <Shield className="w-6 h-6 text-success-600" />
+                  ) : (
+                    <Camera className="w-6 h-6 text-warning-600" />
+                  )}
+                </div>
+                <div>
+                  <h3 className="font-bold text-text-main">
+                    {t('profile.faceVerification') || 'Xác minh khuôn mặt'}
+                  </h3>
+                  <p className="text-sm text-gray-500">
+                    {faceRegistered
+                      ? (t('profile.faceRegistered') || 'Khuôn mặt đã được đăng ký')
+                      : (t('profile.faceNotRegistered') || 'Chưa đăng ký khuôn mặt - cần đăng ký để làm bài thi')}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowFaceRegistration(true)}
+                className={`px-4 py-2 rounded-lg font-medium transition-colors ${faceRegistered
+                    ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    : 'bg-primary text-white hover:bg-primary-600'
+                  }`}
+              >
+                {faceRegistered
+                  ? (t('profile.updateFace') || 'Cập nhật ảnh')
+                  : (t('profile.registerFace') || 'Đăng ký ngay')}
+              </button>
+            </div>
+
+            {!faceRegistered && (
+              <div className="bg-warning-50 rounded-lg p-3 text-sm text-warning-700 flex items-start space-x-2">
+                <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                <p>
+                  {t('profile.faceRequiredWarning') || 'Bạn cần đăng ký khuôn mặt trước khi tham gia bài thi để hệ thống có thể xác minh danh tính.'}
+                </p>
+              </div>
+            )}
+          </div>
+        </motion.div>
+
+        {/* Face Registration Modal */}
+        <AnimatePresence>
+          {showFaceRegistration && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 overflow-y-auto"
+              onClick={() => setShowFaceRegistration(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-paper rounded-2xl shadow-xl max-w-2xl w-full my-4 flex flex-col"
+                style={{ maxHeight: 'calc(100vh - 2rem)' }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="p-6 border-b border-gray-200 flex-shrink-0">
+                  <h2 className="text-xl font-bold text-text-main">
+                    {t('profile.faceRegistrationTitle') || 'Đăng ký khuôn mặt'}
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {t('profile.faceRegistrationDesc') || 'Đây là lần đầu bạn thi. Vui lòng chụp ảnh khuôn mặt để đăng ký xác minh.'}
+                  </p>
+                </div>
+                <div className="p-6 overflow-y-auto flex-1">
+                  <FaceVerification
+                    mode="enroll"
+                    onEnrollComplete={async (embedding, imageUrl) => {
+                      // Save face embedding to database
+                      try {
+                        const { error } = await supabase.rpc('update_face_embedding', {
+                          p_embedding: embedding,
+                          p_image_url: imageUrl
+                        });
+
+                        if (error) {
+                          console.error('Error saving face embedding:', error);
+                          toast.error(t('error.general') || 'Có lỗi xảy ra khi lưu');
+                          return;
+                        }
+
+                        setShowFaceRegistration(false);
+
+                        // Refresh profile to sync face verification status
+                        // faceRegistered is now derived from profile, so this will update it
+                        await refetchProfile();
+
+                        toast.success(t('profile.faceRegisteredSuccess') || 'Đăng ký khuôn mặt thành công!');
+                      } catch (err) {
+                        console.error('Face registration error:', err);
+                        toast.error(t('error.general') || 'Có lỗi xảy ra');
+                      }
+                    }}
+                    onFailure={() => {
+                      toast.error(t('face.failed') || 'Đăng ký thất bại. Vui lòng thử lại.');
+                    }}
+                  />
+                </div>
+                <div className="p-4 border-t border-gray-200 bg-gray-50 flex-shrink-0">
+                  <button
+                    onClick={() => setShowFaceRegistration(false)}
+                    className="w-full py-2 text-gray-600 hover:text-gray-800 text-sm font-medium"
+                  >
+                    {t('common.cancel') || 'Hủy'}
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* My Classes Section */}
         {classes.length > 0 && (
-          <motion.div 
+          <motion.div
             variants={itemVariants}
             className="mb-10"
           >
-            <div 
+            <div
               onClick={() => setShowClasses(!showClasses)}
               className="flex items-center justify-between cursor-pointer mb-4 group"
             >
@@ -327,10 +497,10 @@ export default function Dashboard() {
               </div>
               <ChevronRight className={`w-5 h-5 text-gray-400 transition-transform ${showClasses ? 'rotate-90' : ''}`} />
             </div>
-            
+
             <AnimatePresence>
               {showClasses && (
-                <motion.div 
+                <motion.div
                   initial={{ height: 0, opacity: 0 }}
                   animate={{ height: 'auto', opacity: 1 }}
                   exit={{ height: 0, opacity: 0 }}
@@ -347,26 +517,25 @@ export default function Dashboard() {
                         <div className="flex items-start justify-between mb-2">
                           <div className="flex items-center space-x-2">
                             <BookOpen className="w-5 h-5 text-primary" />
-                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                              enrollment.status === 'active' 
-                                ? 'bg-success-100 text-success-700' 
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${enrollment.status === 'active'
+                                ? 'bg-success-100 text-success-700'
                                 : enrollment.status === 'completed'
-                                ? 'bg-primary-100 text-primary-700'
-                                : 'bg-gray-100 text-gray-600'
-                            }`}>
-                              {enrollment.status === 'active' 
+                                  ? 'bg-primary-100 text-primary-700'
+                                  : 'bg-gray-100 text-gray-600'
+                              }`}>
+                              {enrollment.status === 'active'
                                 ? (t('student.statusActive') || 'Đang học')
                                 : enrollment.status === 'completed'
-                                ? (t('class.status.completed') || 'Hoàn thành')
-                                : (t('class.status.dropped') || 'Đã rời')}
+                                  ? (t('class.status.completed') || 'Hoàn thành')
+                                  : (t('class.status.dropped') || 'Đã rời')}
                             </span>
                           </div>
                         </div>
-                        
+
                         <h3 className="font-bold text-text-main mb-1 line-clamp-2">
                           {enrollment.class?.name || 'N/A'}
                         </h3>
-                        
+
                         <div className="text-xs text-gray-500 space-y-1">
                           <p className="flex items-center space-x-1">
                             <span className="font-medium">{t('class.code') || 'Mã lớp'}:</span>
@@ -384,7 +553,7 @@ export default function Dashboard() {
                             </p>
                           )}
                         </div>
-                        
+
                         <div className="mt-3 pt-3 border-t border-gray-100 text-xs text-gray-400">
                           {t('student.enrolledAt') || 'Tham gia'}: {new Date(enrollment.enrolled_at).toLocaleDateString('vi-VN')}
                         </div>
@@ -407,23 +576,20 @@ export default function Dashboard() {
                 <motion.div
                   key={exam.id}
                   variants={itemVariants}
-                  className={`card hover:shadow-soft transition-all group ${
-                    !status.canTake ? 'opacity-75' : ''
-                  }`}
+                  className={`card hover:shadow-soft transition-all group ${!status.canTake ? 'opacity-75' : ''
+                    }`}
                 >
                   <div className="flex justify-between items-start mb-4">
                     <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${status.color}`}>
                       {status.label}
                     </div>
-                    <StatusIcon className={`w-5 h-5 ${
-                      status.type === 'active' ? 'text-primary' :
-                      status.type === 'completed' ? 'text-success' : 'text-gray-400'
-                    }`} />
+                    <StatusIcon className={`w-5 h-5 ${status.type === 'active' ? 'text-primary' :
+                        status.type === 'completed' ? 'text-success' : 'text-gray-400'
+                      }`} />
                   </div>
 
-                  <h3 className={`text-xl font-bold mb-2 ${
-                    status.canTake ? 'text-text-main group-hover:text-primary' : 'text-gray-700'
-                  } transition-colors`}>
+                  <h3 className={`text-xl font-bold mb-2 ${status.canTake ? 'text-text-main group-hover:text-primary' : 'text-gray-700'
+                    } transition-colors`}>
                     {exam.title}
                   </h3>
 
@@ -466,8 +632,8 @@ export default function Dashboard() {
                     </button>
                   ) : (
                     <button disabled className="w-full bg-gray-200 text-gray-500 py-3 rounded-xl font-semibold cursor-not-allowed">
-                      {status.type === 'upcoming' ? t('dashboard.notStarted') : 
-                       status.type === 'ended' ? t('dashboard.expired') : t('dashboard.notAvailable')}
+                      {status.type === 'upcoming' ? t('dashboard.notStarted') :
+                        status.type === 'ended' ? t('dashboard.expired') : t('dashboard.notAvailable')}
                     </button>
                   )}
                 </motion.div>
@@ -488,7 +654,7 @@ export default function Dashboard() {
         {exams.length === 0 && (
           <div className="mt-8">
             <p className="text-sm text-gray-500 mb-4">{t('dashboard.demoExam')}</p>
-            <motion.div 
+            <motion.div
               variants={itemVariants}
               className="card hover:shadow-soft transition-all group max-w-md"
             >

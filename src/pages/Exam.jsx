@@ -6,12 +6,16 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { t as translate } from '../lib/i18n'; // Direct import for event handlers
 import { supabase } from '../lib/supabase';
-import { 
-  Flag, FlagOff, StickyNote, ChevronLeft, ChevronRight, 
+import {
+  Flag, FlagOff, StickyNote, ChevronLeft, ChevronRight,
   Clock, Camera, AlertTriangle, Send, Wifi, WifiOff,
   Shield, Loader2, CheckCircle, XCircle, Eye, EyeOff, Monitor
 } from 'lucide-react';
 import FaceVerification from '../components/FaceVerification';
+
+// ============================================
+// CONSTANTS
+// ============================================
 
 // Remote desktop detection signatures
 const REMOTE_DESKTOP_SIGNATURES = [
@@ -30,6 +34,10 @@ const DEMO_SESSION_IDS = ['demo-session', 'demo-session-id'];
 // Timeout constants
 const SUBMIT_TIMEOUT_MS = 30000; // Increased to 30 seconds for better reliability
 const SUBMIT_TIMEOUT_ERROR = 'SUBMIT_TIMEOUT';
+
+// Evidence capture constants
+const SCREENSHOT_QUALITY = 0.85; // JPEG quality for evidence screenshots
+const CRITICAL_EVENTS_FOR_EVIDENCE = ['phoneDetected', 'headphonesDetected', 'materialDetected', 'multiPerson'];
 
 export default function Exam() {
   const { id: examId } = useParams();
@@ -81,6 +89,7 @@ export default function Exam() {
   // UI State
   const [showNotes, setShowNotes] = useState(false);
   const [showQuestionNav, setShowQuestionNav] = useState(true);
+  const [showSubmitConfirm, setShowSubmitConfirm] = useState(false); // Custom confirmation modal
 
   // Current question
   const currentQuestion = questions[currentQuestionIndex];
@@ -168,7 +177,7 @@ export default function Exam() {
   // ============================================
   // FULLSCREEN MANAGEMENT
   // ============================================
-  
+
   const enterFullscreen = async () => {
     try {
       const docEl = document.documentElement;
@@ -197,16 +206,16 @@ export default function Exam() {
   useEffect(() => {
     const handleFullscreenChange = () => {
       // Check for different browsers
-      const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement || 
-                        document.mozFullScreenElement || document.msFullscreenElement);
+      const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement ||
+        document.mozFullScreenElement || document.msFullscreenElement);
       setIsFullscreen(isFull);
-      
+
       // On Safari, fullscreen API has limited support - skip violations
       if (IS_SAFARI) {
         console.log("Safari fullscreen state change - skipping violation check");
         return;
       }
-      
+
       // Don't trigger violation if submitting or not in exam
       // Use ref instead of state because event handlers have stale closure
       if (!isFull && examStarted && !isSubmittingRef.current) {
@@ -218,13 +227,13 @@ export default function Exam() {
         });
       }
     };
-    
+
     // Listen to both standard and webkit (Safari) events
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
     document.addEventListener('mozfullscreenchange', handleFullscreenChange);
     document.addEventListener('MSFullscreenChange', handleFullscreenChange);
-    
+
     return () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
@@ -273,12 +282,12 @@ export default function Exam() {
       ];
 
       for (const combo of blockedCombos) {
-        const matches = 
+        const matches =
           (!combo.ctrl || e.ctrlKey) &&
           (!combo.shift || e.shiftKey) &&
           (!combo.alt || e.altKey) &&
           (e.key.toLowerCase() === combo.key?.toLowerCase() || e.key === combo.key);
-        
+
         if (matches && combo.key) {
           e.preventDefault();
           toast.warning("Phím tắt bị vô hiệu hóa trong phòng thi!");
@@ -296,7 +305,7 @@ export default function Exam() {
 
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('contextmenu', handleContextMenu);
-    
+
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('contextmenu', handleContextMenu);
@@ -310,7 +319,7 @@ export default function Exam() {
   const frameIntervalRef = useRef(null);
   const canvasRef = useRef(null);
   const ctxRef = useRef(null);
-  
+
   // Helper function to setup camera stream and canvas
   const setupCameraWithCanvas = (stream) => {
     cameraStreamRef.current = stream;
@@ -325,7 +334,7 @@ export default function Exam() {
       ctxRef.current = canvasRef.current.getContext('2d', { willReadFrequently: true });
     }
   };
-  
+
   // Retry camera function for UI button
   const retryCamera = async () => {
     setCameraStatus('loading');
@@ -334,16 +343,16 @@ export default function Exam() {
       if (cameraStreamRef.current) {
         cameraStreamRef.current.getTracks().forEach(track => track.stop());
       }
-      
-      const constraints = { 
-        video: { 
-          width: { ideal: 640, min: 320 }, 
+
+      const constraints = {
+        video: {
+          width: { ideal: 640, min: 320 },
           height: { ideal: 480, min: 240 },
           facingMode: 'user'
         },
         audio: false
       };
-      
+
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       setupCameraWithCanvas(stream);
       setCameraStatus('ready');
@@ -354,21 +363,21 @@ export default function Exam() {
       toast.error(t('anticheat.cameraAccess'));
     }
   };
-  
+
   useEffect(() => {
     const startCamera = async () => {
       setCameraStatus('loading');
       try {
         // Request camera with multiple fallback options for better browser compatibility
-        const constraints = { 
-          video: { 
-            width: { ideal: 640, min: 320 }, 
+        const constraints = {
+          video: {
+            width: { ideal: 640, min: 320 },
             height: { ideal: 480, min: 240 },
             facingMode: 'user'
           },
           audio: false // Explicitly disable audio to avoid permission issues
         };
-        
+
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         setupCameraWithCanvas(stream);
         setCameraStatus('ready');
@@ -397,7 +406,7 @@ export default function Exam() {
         }
       }
     };
-    
+
     startCamera();
 
     return () => {
@@ -407,6 +416,88 @@ export default function Exam() {
       }
     };
   }, []); // Run once on mount
+
+  // Re-attach video stream when examStarted changes (video element changes between views)
+  // Use tiered delays and mutation observer to ensure the new video element has mounted before attaching stream.
+  // The DOM takes variable time to update, especially with animations, so we use multiple attempts.
+  const VIDEO_MOUNT_DELAYS = [50, 100, 200, 500, 1000]; // Multiple retry delays for reliability
+  const VIDEO_ATTACHMENT_TIMEOUT_MS = 3000; // Stop checking after this time
+  const VIDEO_CHECK_INTERVAL_MS = 250; // Interval for checking video readiness
+
+  // Helper function to check if camera stream is still active
+  const isStreamActive = (stream) => {
+    if (!stream) return false;
+    const tracks = stream.getTracks();
+    return tracks.length > 0 && tracks.some(track => track.readyState === 'live');
+  };
+
+  useEffect(() => {
+    const attachStreamToVideo = () => {
+      // Only if we have a stream and a video element
+      if (cameraStreamRef.current && videoRef.current) {
+        const stream = cameraStreamRef.current;
+        const video = videoRef.current;
+
+        // Check if stream is still active
+        if (!isStreamActive(stream)) {
+          console.warn('[Exam] Camera stream is not active, attempting to restart camera');
+          retryCamera();
+          return;
+        }
+
+        // Check if video already has the correct stream
+        if (video.srcObject !== stream) {
+          console.log('[Exam] Attaching camera stream to video element');
+          video.srcObject = stream;
+
+          // Add event listener for when video loads data
+          video.onloadeddata = () => {
+            console.log('[Exam] Video data loaded, readyState:', video.readyState);
+          };
+        }
+
+        // Ensure video plays (might need to restart if paused)
+        if (video.paused || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+          video.play().catch(err => {
+            console.warn('Video play failed:', err);
+            // Try muted autoplay as fallback (browser autoplay policy)
+            video.muted = true;
+            video.play().catch(() => { });
+          });
+        }
+      }
+    };
+
+    // Immediate attempt
+    attachStreamToVideo();
+
+    // Multiple tiered retries to handle DOM mounting timing
+    const timeoutIds = VIDEO_MOUNT_DELAYS.map(delay =>
+      setTimeout(attachStreamToVideo, delay)
+    );
+
+    // Also observe for video element readiness
+    const checkInterval = setInterval(() => {
+      if (videoRef.current && cameraStreamRef.current) {
+        attachStreamToVideo();
+        // Stop checking once video is playing
+        if (videoRef.current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          clearInterval(checkInterval);
+        }
+      }
+    }, VIDEO_CHECK_INTERVAL_MS);
+
+    // Clear after timeout (should be attached by then)
+    const cleanupTimeout = setTimeout(() => {
+      clearInterval(checkInterval);
+    }, VIDEO_ATTACHMENT_TIMEOUT_MS);
+
+    return () => {
+      timeoutIds.forEach(id => clearTimeout(id));
+      clearInterval(checkInterval);
+      clearTimeout(cleanupTimeout);
+    };
+  }, [examStarted]);
 
   // ============================================
   // NETWORK & AI WORKER SETUP - Only active during exam
@@ -420,7 +511,7 @@ export default function Exam() {
     // Helper function to translate AI worker messages
     const translateWorkerMessage = (data) => {
       const { code, payload, detectedClass, confidence, count } = data;
-      
+
       // Map detection classes to translation keys (predefined for maintainability)
       const detectionClassMap = {
         'phone': translate('anticheat.phoneDetected'),
@@ -428,7 +519,7 @@ export default function Exam() {
         'headphones': translate('anticheat.headphonesDetected'),
         'person': translate('anticheat.noFace'), // person detection for multi-person
       };
-      
+
       // Map message codes to translation keys
       const messageMap = {
         'lookAtScreen': translate('anticheat.lookAtScreen'),
@@ -452,32 +543,38 @@ export default function Exam() {
         'faceOnly': translate('anticheat.faceOnly'),
         'yoloOnly': translate('anticheat.yoloOnly'),
       };
-      
+
       // Handle detection messages with confidence
       if (code === 'detection' && detectedClass && detectionClassMap[detectedClass]) {
         const detectionMsg = detectionClassMap[detectedClass];
         return `${detectionMsg} (${((confidence || 0) * 100).toFixed(0)}%)`;
       }
-      
+
       return messageMap[code] || messageMap[payload] || payload;
     };
 
     // Initialize AI Worker
     workerRef.current = new Worker(new URL('../workers/ai.worker.js', import.meta.url), { type: 'module' });
+
+    // Send explicit INIT message to ensure models are loaded (backup to auto-init)
+    workerRef.current.postMessage({ type: 'INIT' });
+
     workerRef.current.onmessage = (e) => {
       const { type, payload, code } = e.data;
       const translatedMessage = translateWorkerMessage(e.data);
-      
+
       if (type === 'STATUS') setStatus(translatedMessage);
       else if (type === 'ALERT') {
         setCheatCount(prev => prev + 1);
         toast.warning(`${translate('anticheat.aiWarning')}: ${translatedMessage}`);
-        logProctoring('ai_alert', { message: payload, code });
+        // Capture screenshot for critical AI detections
+        const shouldCaptureScreenshot = CRITICAL_EVENTS_FOR_EVIDENCE.includes(code);
+        logProctoring('ai_alert', { message: payload, code }, shouldCaptureScreenshot);
       } else if (type === 'GAZE_AWAY') {
         setGazeAwayCount(prev => prev + 1);
       }
     };
-    
+
     // Handle worker errors
     workerRef.current.onerror = (error) => {
       console.error('AI Worker error:', error);
@@ -486,8 +583,54 @@ export default function Exam() {
 
     // Start frame processing when exam starts AND camera is ready
     // We need to check cameraStatus to ensure canvas context is available
-    if (examStarted && cameraStatus === 'ready' && videoRef.current && ctxRef.current) {
-      console.log('🎬 Starting AI frame processing...');
+    // Use multiple retry attempts with increasing delays to ensure video element is mounted
+    // Delays increase exponentially: 300ms -> 600ms -> 1s -> 1.5s -> 2s -> 3s
+    // This handles DOM mounting variability during animation transitions
+    const FRAME_PROCESSING_DELAYS = [300, 600, 1000, 1500, 2000, 3000];
+    const FRAME_INTERVAL_MS = 200; // Process frames every 200ms (5 FPS)
+
+    const startFrameProcessing = () => {
+      if (frameIntervalRef.current) {
+        console.log('🎬 Frame processing already started');
+        return true; // Already started
+      }
+
+      // Double-check video is ready
+      if (!videoRef.current || !ctxRef.current || !workerRef.current) {
+        console.log('🎬 Frame processing prerequisites not met yet:', {
+          hasVideo: !!videoRef.current,
+          hasCanvas: !!ctxRef.current,
+          hasWorker: !!workerRef.current
+        });
+        return false;
+      }
+
+      // Check if video has data AND stream is attached
+      if (videoRef.current.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        console.log('🎬 Video not ready yet, readyState:', videoRef.current.readyState,
+          '(need', HTMLMediaElement.HAVE_CURRENT_DATA, 'or higher)');
+        return false;
+      }
+
+      // Check video dimensions to ensure stream is actually providing data
+      if (!videoRef.current.videoWidth || videoRef.current.videoWidth === 0) {
+        console.log('🎬 Video has no dimensions yet, waiting for stream...');
+        return false;
+      }
+
+      // Additional check: ensure srcObject is set
+      if (!videoRef.current.srcObject) {
+        console.log('🎬 Video has no srcObject, stream not attached');
+        return false;
+      }
+
+      console.log('🎬 ✅ Starting AI frame processing!');
+      console.log('   Video ready:', !!videoRef.current, 'readyState:', videoRef.current?.readyState);
+      console.log('   Video dimensions:', videoRef.current?.videoWidth, 'x', videoRef.current?.videoHeight);
+      console.log('   Video srcObject:', !!videoRef.current?.srcObject);
+      console.log('   Canvas context ready:', !!ctxRef.current);
+      console.log('   Worker ready:', !!workerRef.current);
+
       frameIntervalRef.current = setInterval(() => {
         if (videoRef.current && workerRef.current && ctxRef.current && !isSubmittingRef.current) {
           try {
@@ -499,27 +642,101 @@ export default function Exam() {
               // Only send if we have valid image data
               if (imageData.data && imageData.data.length > 0) {
                 workerRef.current.postMessage(
-                  { type: 'PROCESS_FRAME', payload: imageData }, 
+                  { type: 'PROCESS_FRAME', payload: imageData },
                   [imageData.data.buffer]
                 );
+              } else {
+                console.warn('🎬 Empty image data, skipping frame');
               }
+            } else {
+              console.warn('🎬 Video not ready in frame loop, readyState:', videoRef.current.readyState,
+                'dimensions:', videoRef.current.videoWidth, 'x', videoRef.current.videoHeight);
             }
           } catch (err) {
             console.warn('Error sending frame to worker:', err);
           }
         }
-      }, 200);
+      }, FRAME_INTERVAL_MS);
+
+      console.log('🎬 Frame processing interval started (every', FRAME_INTERVAL_MS, 'ms)');
+      return true;
+    };
+
+    const timeoutIds = [];
+    let checkIntervalId = null;
+
+    if (examStarted && cameraStatus === 'ready') {
+      // Try multiple times with increasing delays
+      FRAME_PROCESSING_DELAYS.forEach(delay => {
+        const id = setTimeout(() => {
+          if (!frameIntervalRef.current) {
+            startFrameProcessing();
+          }
+        }, delay);
+        timeoutIds.push(id);
+      });
+
+      // Also use an interval check for reliability
+      checkIntervalId = setInterval(() => {
+        if (!frameIntervalRef.current) {
+          const started = startFrameProcessing();
+          if (started) {
+            console.log('🎬 Frame processing started via interval check');
+            clearInterval(checkIntervalId);
+          }
+        } else {
+          clearInterval(checkIntervalId);
+        }
+      }, 400);
+
+      // Stop checking after 10 seconds (increased for reliability)
+      // If it still hasn't started by then, log a warning
+      timeoutIds.push(setTimeout(() => {
+        if (checkIntervalId) clearInterval(checkIntervalId);
+        if (!frameIntervalRef.current) {
+          console.error('🎬 ❌ CRITICAL: Frame processing failed to start after 10 seconds!');
+          console.error('   This means anti-cheat AI is NOT running.');
+          console.error('   Debug info:', {
+            examStarted,
+            cameraStatus,
+            hasVideo: !!videoRef.current,
+            hasCanvas: !!ctxRef.current,
+            hasWorker: !!workerRef.current,
+            videoReadyState: videoRef.current?.readyState,
+            videoDimensions: {
+              width: videoRef.current?.videoWidth,
+              height: videoRef.current?.videoHeight
+            },
+            hasSrcObject: !!videoRef.current?.srcObject
+          });
+          // Show user-friendly warning
+          toast.error(t('anticheat.aiNotStarted') || 'Hệ thống giám sát AI không khởi động được. Vui lòng tải lại trang.', {
+            autoClose: false
+          });
+        } else {
+          console.log('🎬 ✅ Frame processing confirmed running');
+        }
+      }, 10000));
     }
 
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
-      
+
+      // Clear all timeouts
+      timeoutIds.forEach(id => clearTimeout(id));
+
+      // Clear check interval
+      if (checkIntervalId) {
+        clearInterval(checkIntervalId);
+      }
+
       // Clear the frame interval
       if (frameIntervalRef.current) {
         clearInterval(frameIntervalRef.current);
+        frameIntervalRef.current = null;
       }
-      
+
       // Terminate worker
       if (workerRef.current) {
         workerRef.current.terminate();
@@ -563,7 +780,7 @@ export default function Exam() {
     const loadExamData = async () => {
       // Check if demo mode
       const isDemo = examId === 'demo' || examId === '1';
-      
+
       if (isDemo) {
         // Demo mode - use mock data for testing
         setExamData({
@@ -711,8 +928,8 @@ export default function Exam() {
         }
 
         // Shuffle questions if required
-        const finalQuestions = exam.is_shuffled 
-          ? shuffleArray(questionsData) 
+        const finalQuestions = exam.is_shuffled
+          ? shuffleArray(questionsData)
           : questionsData;
 
         setQuestions(finalQuestions);
@@ -730,7 +947,7 @@ export default function Exam() {
         if (existingSession) {
           // Resume existing session
           setSessionId(existingSession.id);
-          
+
           // Calculate remaining time using UTC timestamps to avoid timezone issues
           // Supabase returns timestamps in ISO format with timezone info
           const startedAtUTC = new Date(existingSession.started_at).getTime();
@@ -757,7 +974,7 @@ export default function Exam() {
             const answersMap = {};
             const flaggedSet = new Set();
             const notesMap = {};
-            
+
             existingAnswers.forEach(a => {
               answersMap[a.question_id] = a.student_answer;
               if (a.is_flagged) flaggedSet.add(a.question_id);
@@ -795,37 +1012,131 @@ export default function Exam() {
   // ============================================
   // PROCTORING LOG HELPER
   // ============================================
-  const logProctoring = async (eventType, details) => {
-    if (!sessionId) return;
-    
+  // ============================================
+  // EVIDENCE CAPTURE FOR PROCTORING
+  // ============================================
+
+  /**
+   * Capture screenshot from video canvas and upload to Supabase Storage
+   * Returns the public URL of the uploaded image or null if failed
+   */
+  const captureEvidenceScreenshot = async () => {
+    // Only capture in production mode with valid session
+    if (!sessionId || DEMO_SESSION_IDS.includes(sessionId) || DEMO_EXAM_IDS.includes(examId)) {
+      return null;
+    }
+
+    if (!videoRef.current || !canvasRef.current || !ctxRef.current) {
+      console.warn('[Evidence] Cannot capture: missing video/canvas');
+      return null;
+    }
+
     try {
+      // Draw current video frame to canvas
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const ctx = ctxRef.current;
+
+      // Ensure video is ready
+      if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth) {
+        console.warn('[Evidence] Video not ready for capture');
+        return null;
+      }
+
+      // Draw frame
+      ctx.drawImage(video, 0, 0, 640, 480);
+
+      // Convert canvas to blob (JPEG for smaller file size)
+      const blob = await new Promise((resolve) => {
+        canvas.toBlob(resolve, 'image/jpeg', SCREENSHOT_QUALITY);
+      });
+
+      if (!blob) {
+        console.warn('[Evidence] Failed to create blob from canvas');
+        return null;
+      }
+
+      // Generate unique filename with timestamp (sanitize for storage)
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `${sessionId}_${timestamp}.jpg`;
+
+      // Upload to Supabase Storage
+      const { data, error } = await supabase.storage
+        .from('proctoring-evidence')
+        .upload(filename, blob, {
+          contentType: 'image/jpeg',
+          cacheControl: '3600',
+          upsert: false
+        });
+
+      if (error) {
+        console.error('[Evidence] Upload failed:', error);
+        return null;
+      }
+
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from('proctoring-evidence')
+        .getPublicUrl(filename);
+
+      console.log('[Evidence] Screenshot captured:', urlData.publicUrl);
+      return urlData.publicUrl;
+    } catch (err) {
+      console.error('[Evidence] Capture error:', err);
+      return null;
+    }
+  };
+
+  // ============================================
+  // PROCTORING LOG WITH EVIDENCE
+  // ============================================
+
+  const logProctoring = async (eventType, details, captureScreenshot = false) => {
+    // Skip logging if no session or if in demo mode
+    if (!sessionId) return;
+    if (DEMO_SESSION_IDS.includes(sessionId) || DEMO_EXAM_IDS.includes(examId)) return;
+
+    try {
+      let screenshot_url = null;
+
+      // Capture screenshot for critical events
+      if (captureScreenshot) {
+        screenshot_url = await captureEvidenceScreenshot();
+      }
+
       await supabase.from('proctoring_logs').insert({
         session_id: sessionId,
         event_type: eventType,
         details: details,
-        severity: eventType.includes('detected') ? 'critical' : 'warning'
+        severity: eventType.includes('detected') ? 'critical' : 'warning',
+        screenshot_url: screenshot_url
       });
+
+      if (screenshot_url) {
+        console.log('[Evidence] Logged with screenshot:', eventType);
+      }
     } catch (e) {
-      console.error('Failed to log proctoring event:', e);
+      // Silently fail for proctoring logs - don't interrupt the exam
+      console.warn('Failed to log proctoring event:', e?.message || e);
     }
   };
 
   // ============================================
   // FACE VERIFICATION HANDLERS
   // ============================================
-  
+
   // Load stored face embedding from profile
   useEffect(() => {
     const loadFaceEmbedding = async () => {
       if (!user?.id) return;
-      
+
       try {
         const { data: profileData } = await supabase
           .from('profiles')
           .select('face_embedding')
           .eq('id', user.id)
           .single();
-        
+
         if (profileData?.face_embedding) {
           setStoredFaceEmbedding(profileData.face_embedding);
         }
@@ -833,45 +1144,35 @@ export default function Exam() {
         console.warn('Could not load face embedding:', error);
       }
     };
-    
+
     loadFaceEmbedding();
   }, [user?.id]);
 
-  // Schedule random face verifications during exam
+  // Schedule random face verifications during exam - fixed 3-minute interval
   useEffect(() => {
     if (!examStarted || !sessionId) return;
-    
+
     // Skip random verification in demo mode
     const isDemo = examId === 'demo' || examId === '1';
     if (isDemo) return;
-    
-    // Schedule 2-3 random verifications during exam
-    const examDuration = (examData?.duration_minutes || 60) * 60 * 1000;
-    const numChecks = Math.floor(Math.random() * 2) + 2; // 2-3 checks
-    const intervals = [];
-    
-    for (let i = 0; i < numChecks; i++) {
-      // Random time between 20% and 80% of exam duration
-      const minTime = examDuration * 0.2;
-      const maxTime = examDuration * 0.8;
-      const checkTime = minTime + Math.random() * (maxTime - minTime);
-      
-      const timeout = setTimeout(() => {
-        // Only trigger if exam is still in progress
-        if (examStarted && !isSubmitting && !showFaceVerification) {
-          triggerRandomVerification();
-        }
-      }, checkTime);
-      
-      intervals.push(timeout);
-    }
-    
-    randomVerifyRef.current = intervals;
-    
+
+    // Fixed 3-minute interval for face verification
+    const CHECK_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
+
+    console.log('[Face Verification] Setting up 3-minute interval checks');
+
+    const interval = setInterval(() => {
+      // Only trigger if exam is still in progress
+      if (examStarted && !isSubmitting && !showFaceVerification) {
+        console.log('[Face Verification] Triggering random check (3-min interval)');
+        triggerRandomVerification();
+      }
+    }, CHECK_INTERVAL_MS);
+
     return () => {
-      intervals.forEach(clearTimeout);
+      clearInterval(interval);
     };
-  }, [examStarted, sessionId, examId, examData?.duration_minutes]);
+  }, [examStarted, sessionId, examId, isSubmitting, showFaceVerification]);
 
   const triggerRandomVerification = () => {
     setFaceVerificationMode('random');
@@ -882,7 +1183,7 @@ export default function Exam() {
   const handleFaceVerificationSuccess = async (similarity) => {
     setShowFaceVerification(false);
     setFaceVerificationCount(prev => prev + 1);
-    
+
     // Log successful verification
     if (sessionId && sessionId !== 'demo-session-id') {
       try {
@@ -896,9 +1197,9 @@ export default function Exam() {
         console.warn('Could not log face verification:', error);
       }
     }
-    
+
     toast.success(t('face.success'));
-    
+
     // Execute pending callback if any
     if (pendingVerificationCallback) {
       pendingVerificationCallback();
@@ -921,9 +1222,9 @@ export default function Exam() {
         console.warn('Could not log face verification:', error);
       }
     }
-    
+
     logProctoring('face_verification_failed', { reason, similarity, type: faceVerificationMode });
-    
+
     // For random checks, just warn but don't block
     if (faceVerificationMode === 'random') {
       toast.warning(t('face.mismatch'));
@@ -936,7 +1237,7 @@ export default function Exam() {
   const handleFaceEnrollComplete = async (embedding, imageUrl) => {
     setStoredFaceEmbedding(embedding);
     setShowFaceVerification(false);
-    
+
     // Save embedding to profile
     if (user?.id) {
       try {
@@ -948,9 +1249,9 @@ export default function Exam() {
         console.warn('Could not save face embedding:', error);
       }
     }
-    
+
     toast.success(t('face.enrollSuccess'));
-    
+
     // Execute pending callback
     if (pendingVerificationCallback) {
       pendingVerificationCallback();
@@ -1004,7 +1305,7 @@ export default function Exam() {
   // ============================================
   useEffect(() => {
     if (!examStarted || !sessionId) return;
-    
+
     const isDemo = examId === 'demo' || examId === '1';
     if (isDemo) return; // Don't auto-save in demo mode
 
@@ -1051,7 +1352,7 @@ export default function Exam() {
     };
 
     const autoSaveInterval = setInterval(saveAnswers, 30000); // Every 30 seconds
-    
+
     return () => clearInterval(autoSaveInterval);
   }, [examStarted, sessionId, examId, questions, answers, flaggedQuestions, notes]);
 
@@ -1065,37 +1366,33 @@ export default function Exam() {
 
   const handleSubmit = async (isAuto = false) => {
     if (isSubmitting) return;
-    
-    // Confirmation for manual submit
+
+    // For manual submit, show custom confirmation modal (window.confirm doesn't work well in fullscreen)
     if (!isAuto) {
-      const unanswered = questions.filter(q => !answers[q.id]).length;
-      const flagged = flaggedQuestions.size;
-      
-      let confirmMsg = t('exam.submitConfirm');
-      if (unanswered > 0) {
-        confirmMsg += `\n\n⚠️ ${unanswered} ${t('exam.unansweredWarning')}`;
-      }
-      if (flagged > 0) {
-        confirmMsg += `\n⚠️ ${flagged} ${t('exam.flaggedWarning')}`;
-      }
-      
-      if (!window.confirm(confirmMsg)) {
-        return;
-      }
+      setShowSubmitConfirm(true);
+      return;
     }
+
+    // Auto-submit or confirmed submit proceeds here
+    await executeSubmit(isAuto);
+  };
+
+  // Actual submit execution (called after confirmation)
+  const executeSubmit = async (isAuto = false) => {
+    setShowSubmitConfirm(false);
 
     setIsSubmitting(true);
     isSubmittingRef.current = true; // Update ref for event handlers
 
     try {
       const isDemo = DEMO_EXAM_IDS.includes(examId) || DEMO_SESSION_IDS.includes(sessionId);
-      
+
       if (isDemo) {
         // Demo scoring - for testing purposes only
         const demoCorrectAnswers = { '1': 'A', '2': 'C', '3': 'A', '4': 'A', '5': 'A' };
         let score = 0;
         let total = 0;
-        
+
         questions.forEach(q => {
           total += q.points;
           if (answers[q.id] === demoCorrectAnswers[q.id]) {
@@ -1105,7 +1402,7 @@ export default function Exam() {
 
         // Simulate brief processing delay for better UX
         await new Promise(resolve => setTimeout(resolve, 500));
-        
+
         const percentage = total > 0 ? ((score / total) * 100).toFixed(1) : 0;
         toast.success(`${t('exam.submitSuccess')} ${t('exam.score')}: ${score}/${total} (${percentage}%)`);
       } else {
@@ -1157,7 +1454,7 @@ export default function Exam() {
             if (submitError) {
               // RPC function might not exist - try direct update as fallback
               console.warn('RPC submit_exam failed, using direct update:', submitError);
-              
+
               const { error: directUpdateError } = await supabase
                 .from('exam_sessions')
                 .update({
@@ -1169,14 +1466,14 @@ export default function Exam() {
               if (directUpdateError) {
                 throw directUpdateError;
               }
-              
+
               return { success: true, fallback: true };
             }
 
             return result;
           } catch (rpcError) {
             console.warn('RPC call failed, using fallback:', rpcError);
-            
+
             // Fallback: Direct update
             const { error: fallbackError } = await supabase
               .from('exam_sessions')
@@ -1189,13 +1486,13 @@ export default function Exam() {
             if (fallbackError) {
               throw fallbackError;
             }
-            
+
             return { success: true, fallback: true };
           }
         };
 
         // Execute with timeout
-        const timeoutPromise = new Promise((_, reject) => 
+        const timeoutPromise = new Promise((_, reject) =>
           setTimeout(() => reject(new Error(SUBMIT_TIMEOUT_ERROR)), SUBMIT_TIMEOUT_MS)
         );
 
@@ -1211,7 +1508,7 @@ export default function Exam() {
           toast.success(t('exam.submitSuccess'));
         }
       }
-      
+
       // Exit fullscreen safely
       try {
         if (document.fullscreenElement || document.webkitFullscreenElement) {
@@ -1225,11 +1522,11 @@ export default function Exam() {
         console.warn('Error exiting fullscreen:', fsError);
         // Continue anyway - not critical
       }
-      
+
       navigate('/');
     } catch (error) {
       console.error('Submit error:', error);
-      
+
       if (error.message === SUBMIT_TIMEOUT_ERROR) {
         toast.error(t('error.timeout'));
       } else {
@@ -1258,9 +1555,9 @@ export default function Exam() {
 
     // Enter fullscreen
     await enterFullscreen();
-    
+
     const isDemo = examId === 'demo' || examId === '1';
-    
+
     // For production mode, require face verification before starting
     if (!isDemo && examData?.require_camera !== false) {
       // Check if user has enrolled face
@@ -1278,14 +1575,14 @@ export default function Exam() {
         return;
       }
     }
-    
+
     // Demo mode or camera not required - start directly
     await proceedWithExamStart();
   };
 
   const proceedWithExamStart = async () => {
     const isDemo = examId === 'demo' || examId === '1';
-    
+
     if (isDemo) {
       // Demo mode - use mock session
       setSessionId('demo-session-id');
@@ -1318,7 +1615,7 @@ export default function Exam() {
         return;
       }
     }
-    
+
     setExamStarted(true);
     toast.info(t('common.success'));
   };
@@ -1338,7 +1635,7 @@ export default function Exam() {
   if (!examStarted) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-primary-50 to-background p-4">
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           className="bg-paper p-8 rounded-2xl shadow-soft max-w-lg w-full"
@@ -1403,7 +1700,7 @@ export default function Exam() {
                 <div className="absolute inset-0 flex items-center justify-center flex-col p-4">
                   <AlertTriangle className="w-12 h-12 text-danger mb-2" />
                   <p className="text-white text-sm text-center mb-3">{t('anticheat.cameraAccess')}</p>
-                  <button 
+                  <button
                     onClick={retryCamera}
                     className="flex items-center space-x-2 bg-primary hover:bg-primary-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                   >
@@ -1427,22 +1724,22 @@ export default function Exam() {
             )}
           </div>
 
-          <button 
-            onClick={handleStartExam} 
+          <button
+            onClick={handleStartExam}
             disabled={hasMultiScreen || remoteDesktopDetected || cameraStatus !== 'ready'}
             className="btn-primary w-full py-3 text-lg disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Shield className="w-5 h-5 mr-2" />
             {t('exam.rules.agree')}
           </button>
-          
+
           {cameraStatus !== 'ready' && (
             <p className="text-xs text-center text-gray-500 mt-2">
               {t('exam.rules.cameraCheck')} {cameraStatus === 'loading' ? '...' : ''}
             </p>
           )}
         </motion.div>
-        
+
         {/* Face Verification Modal */}
         <AnimatePresence>
           {showFaceVerification && (
@@ -1490,13 +1787,85 @@ export default function Exam() {
           </motion.div>
         )}
       </AnimatePresence>
-      
-      {/* Network Alert Overlay */}
+
+      {/* Submit Confirmation Modal - using custom modal instead of window.confirm for fullscreen compatibility */}
+      <AnimatePresence>
+        {showSubmitConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 z-[200] flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-paper rounded-2xl shadow-xl max-w-md w-full p-6"
+            >
+              <div className="text-center mb-6">
+                <div className="inline-flex items-center justify-center w-16 h-16 bg-warning-100 rounded-full mb-4">
+                  <Send className="w-8 h-8 text-warning" />
+                </div>
+                <h3 className="text-xl font-bold text-text-main">{t('exam.submitConfirm')}</h3>
+              </div>
+
+              {/* Warnings */}
+              <div className="space-y-3 mb-6">
+                {questions.filter(q => !answers[q.id]).length > 0 && (
+                  <div className="flex items-center space-x-3 p-3 bg-warning-50 rounded-lg">
+                    <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0" />
+                    <span className="text-sm text-gray-700">
+                      {questions.filter(q => !answers[q.id]).length} {t('exam.unansweredWarning')}
+                    </span>
+                  </div>
+                )}
+                {flaggedQuestions.size > 0 && (
+                  <div className="flex items-center space-x-3 p-3 bg-warning-50 rounded-lg">
+                    <Flag className="w-5 h-5 text-warning flex-shrink-0" />
+                    <span className="text-sm text-gray-700">
+                      {flaggedQuestions.size} {t('exam.flaggedWarning')}
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center space-x-3 p-3 bg-primary-50 rounded-lg">
+                  <CheckCircle className="w-5 h-5 text-primary flex-shrink-0" />
+                  <span className="text-sm text-gray-700">
+                    {t('exam.answered')}: {Object.keys(answers).length}/{questions.length}
+                  </span>
+                </div>
+              </div>
+
+              {/* Buttons */}
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => setShowSubmitConfirm(false)}
+                  className="flex-1 btn-secondary py-3"
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  onClick={() => executeSubmit(false)}
+                  disabled={isSubmitting}
+                  className="flex-1 btn-success py-3"
+                >
+                  {isSubmitting ? (
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                  ) : (
+                    <Send className="w-5 h-5 mr-2" />
+                  )}
+                  {t('common.submit')}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <AnimatePresence>
         {isOffline && (
-          <motion.div 
-            initial={{ height: 0 }} 
-            animate={{ height: 'auto' }} 
+          <motion.div
+            initial={{ height: 0 }}
+            animate={{ height: 'auto' }}
             exit={{ height: 0 }}
             className="fixed top-0 left-0 right-0 bg-danger text-white text-center font-bold z-50"
           >
@@ -1509,9 +1878,9 @@ export default function Exam() {
 
         {/* Fullscreen Exit Warning - Don't show when submitting or on Safari */}
         {!isFullscreen && !isSubmitting && !IS_SAFARI && (
-          <motion.div 
-            initial={{ opacity: 0 }} 
-            animate={{ opacity: 1 }} 
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
             className="fixed inset-0 bg-black/95 z-40 flex items-center justify-center text-white flex-col"
           >
             <AlertTriangle className="w-20 h-20 text-danger mb-4 animate-bounce" />
@@ -1532,18 +1901,17 @@ export default function Exam() {
             <h1 className="text-lg font-bold text-text-main">{examData?.title}</h1>
             <p className="text-sm text-gray-500">{t('exam.code')}: {examData?.code}</p>
           </div>
-          
+
           <div className="flex items-center space-x-4">
             {/* Connection status */}
             <div className={`flex items-center space-x-1 text-sm ${isOffline ? 'text-danger' : 'text-success'}`}>
               {isOffline ? <WifiOff className="w-4 h-4" /> : <Wifi className="w-4 h-4" />}
               <span>{isOffline ? 'Offline' : 'Online'}</span>
             </div>
-            
+
             {/* Timer */}
-            <div className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-mono text-lg font-bold ${
-              isTimerWarning ? 'bg-danger-100 text-danger animate-pulse' : 'bg-primary-50 text-primary'
-            }`}>
+            <div className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-mono text-lg font-bold ${isTimerWarning ? 'bg-danger-100 text-danger animate-pulse' : 'bg-primary-50 text-primary'
+              }`}>
               <Clock className="w-5 h-5" />
               <span>{formatTime(timeRemaining || 0)}</span>
             </div>
@@ -1570,14 +1938,13 @@ export default function Exam() {
                     <span className="text-sm text-gray-400 ml-2">({currentQuestion.points} điểm)</span>
                   </div>
                 </div>
-                
+
                 <button
                   onClick={() => toggleFlag(currentQuestion.id)}
-                  className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg transition-colors ${
-                    flaggedQuestions.has(currentQuestion.id)
-                      ? 'bg-warning-100 text-warning-700'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
+                  className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg transition-colors ${flaggedQuestions.has(currentQuestion.id)
+                    ? 'bg-warning-100 text-warning-700'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
                 >
                   {flaggedQuestions.has(currentQuestion.id) ? (
                     <>
@@ -1596,16 +1963,15 @@ export default function Exam() {
               {/* Question Content */}
               <div className="card mb-4">
                 <h2 className="text-lg font-semibold text-text-main mb-6">{currentQuestion.question_text}</h2>
-                
+
                 <div className="space-y-3">
                   {currentQuestion.options.map((option) => (
                     <label
                       key={option.id}
-                      className={`flex items-center p-4 border-2 rounded-xl cursor-pointer transition-all ${
-                        answers[currentQuestion.id] === option.id
-                          ? 'border-primary bg-primary-50'
-                          : 'border-gray-200 hover:border-primary-300 hover:bg-gray-50'
-                      }`}
+                      className={`flex items-center p-4 border-2 rounded-xl cursor-pointer transition-all ${answers[currentQuestion.id] === option.id
+                        ? 'border-primary bg-primary-50'
+                        : 'border-gray-200 hover:border-primary-300 hover:bg-gray-50'
+                        }`}
                     >
                       <input
                         type="radio"
@@ -1615,11 +1981,10 @@ export default function Exam() {
                         onChange={() => handleAnswer(currentQuestion.id, option.id)}
                         className="sr-only"
                       />
-                      <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center mr-4 flex-shrink-0 ${
-                        answers[currentQuestion.id] === option.id
-                          ? 'border-primary bg-primary text-white'
-                          : 'border-gray-300'
-                      }`}>
+                      <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center mr-4 flex-shrink-0 ${answers[currentQuestion.id] === option.id
+                        ? 'border-primary bg-primary text-white'
+                        : 'border-gray-300'
+                        }`}>
                         <span className="font-semibold">{option.id}</span>
                       </div>
                       <span className="text-gray-700">{option.text}</span>
@@ -1640,7 +2005,7 @@ export default function Exam() {
                     <span className="w-2 h-2 bg-primary rounded-full" />
                   )}
                 </button>
-                
+
                 <AnimatePresence>
                   {showNotes && (
                     <motion.div
@@ -1763,13 +2128,12 @@ export default function Exam() {
                   <button
                     key={q.id}
                     onClick={() => goToQuestion(idx)}
-                    className={`relative w-10 h-10 rounded-lg font-medium text-sm transition-all ${
-                      isCurrent
-                        ? 'bg-primary text-white ring-2 ring-primary ring-offset-2'
-                        : isAnswered
+                    className={`relative w-10 h-10 rounded-lg font-medium text-sm transition-all ${isCurrent
+                      ? 'bg-primary text-white ring-2 ring-primary ring-offset-2'
+                      : isAnswered
                         ? 'bg-success-100 text-success-700 hover:bg-success-200'
                         : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
+                      }`}
                   >
                     {idx + 1}
                     {isFlagged && (

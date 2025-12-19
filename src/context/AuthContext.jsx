@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { AUTH_LOADING_TIMEOUT_MS, PROFILE_FETCH_TIMEOUT_MS, PROFILE_MAX_RETRIES } from '../lib/constants';
 
 const AuthContext = createContext();
 
@@ -65,9 +66,9 @@ export const AuthProvider = ({ children }) => {
 
   // Fetch user profile from database with retry logic
   const fetchProfile = useCallback(async (userId, retryCount = 0) => {
-    const MAX_RETRIES = 2; // Reduced retries for faster failure
-    const BASE_RETRY_DELAY = 300; // Reduced delay
-    const FETCH_TIMEOUT = 3000; // 3 second timeout per fetch attempt
+    const MAX_RETRIES = PROFILE_MAX_RETRIES;
+    const BASE_RETRY_DELAY = 200; // Reduced delay for faster fallback
+    const FETCH_TIMEOUT = PROFILE_FETCH_TIMEOUT_MS;
     
     // Calculate exponential backoff delay
     const getBackoffDelay = (attempt) => BASE_RETRY_DELAY * Math.pow(2, attempt);
@@ -219,13 +220,39 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
+  // Refetch profile from database - useful after updates that don't return full profile
+  const refetchProfile = useCallback(async () => {
+    if (!user) return { error: { message: 'Not authenticated' } };
+    
+    try {
+      setProfileLoading(true);
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+      
+      if (error) {
+        console.error('Error refetching profile:', error);
+        return { error };
+      }
+      
+      setProfile(data);
+      return { data, error: null };
+    } catch (err) {
+      console.error('Refetch profile error:', err);
+      return { error: err };
+    } finally {
+      setProfileLoading(false);
+    }
+  }, [user]);
+
   useEffect(() => {
     let isMounted = true;
     let sessionCheckComplete = false;
     
     // Add timeout to prevent infinite loading
-    // This timeout will fire if initAuth doesn't complete within 3 seconds
-    // Reduced from 5s to 3s for better UX on slow networks
+    // This timeout will fire if initAuth doesn't complete within AUTH_LOADING_TIMEOUT_MS
     const loadingTimeout = setTimeout(() => {
       if (isMounted && !sessionCheckComplete) {
         console.warn('Auth loading timeout - forcing completion');
@@ -235,7 +262,7 @@ export const AuthProvider = ({ children }) => {
           setProfileLoading(false);
         }
       }
-    }, 3000); // 3 second timeout for better UX
+    }, AUTH_LOADING_TIMEOUT_MS);
 
     // Check active session on mount
     const initAuth = async () => {
@@ -243,7 +270,7 @@ export const AuthProvider = ({ children }) => {
         // Add timeout to getSession call
         const sessionPromise = supabase.auth.getSession();
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Session check timeout')), 3000)
+          setTimeout(() => reject(new Error('Session check timeout')), AUTH_LOADING_TIMEOUT_MS)
         );
         
         let session = null;
@@ -265,7 +292,7 @@ export const AuthProvider = ({ children }) => {
           // Track locally whether profile was successfully set
           let profileWasSet = false;
           
-          // Add overall timeout to prevent infinite loading
+          // Add overall timeout to prevent infinite loading - use faster timeout
           const profileFetchPromise = (async () => {
             try {
               const userProfile = await fetchProfile(currentUser.id);
@@ -287,7 +314,7 @@ export const AuthProvider = ({ children }) => {
             setTimeout(() => {
               console.warn('Profile fetch timeout in initAuth - using fallback');
               resolve();
-            }, 5000); // 5 second overall timeout
+            }, AUTH_LOADING_TIMEOUT_MS); // Use shorter timeout
           });
           
           await Promise.race([profileFetchPromise, timeoutPromise]);
@@ -334,7 +361,7 @@ export const AuthProvider = ({ children }) => {
         // Track locally whether profile was successfully set
         let profileWasSet = false;
         
-        // Add overall timeout to prevent infinite loading
+        // Add overall timeout to prevent infinite loading - use faster timeout
         const profileFetchPromise = (async () => {
           try {
             const userProfile = await fetchProfile(currentUser.id);
@@ -356,7 +383,7 @@ export const AuthProvider = ({ children }) => {
           setTimeout(() => {
             console.warn('Profile fetch timeout in onAuthStateChange - using fallback');
             resolve();
-          }, 5000); // 5 second overall timeout
+          }, AUTH_LOADING_TIMEOUT_MS); // Use shorter timeout
         });
         
         await Promise.race([profileFetchPromise, timeoutPromise]);
@@ -388,7 +415,30 @@ export const AuthProvider = ({ children }) => {
   }, [fetchProfile]);
 
   const login = async (email, password) => {
-    return supabase.auth.signInWithPassword({ email, password });
+    const result = await supabase.auth.signInWithPassword({ email, password });
+    
+    // If login is successful, immediately try to fetch/create profile
+    // This prevents the race condition where UI renders before profile is ready
+    if (result.data?.user && !result.error) {
+      try {
+        const userProfile = await fetchProfile(result.data.user.id);
+        if (userProfile) {
+          setProfile(userProfile);
+        } else {
+          // Use fallback profile if fetch failed
+          setProfile(createFallbackProfile(result.data.user));
+        }
+      } catch (profileError) {
+        // Profile fetch failed on login. A fallback profile is used immediately so the UI is not blocked.
+        // The onAuthStateChange listener will automatically retry profile fetch when auth state changes.
+        // If retry succeeds, the profile will be updated in state automatically.
+        console.warn('Login: Failed to fetch profile immediately, fallback profile applied. The auth listener will retry automatically.');
+        // Set fallback profile so UI doesn't block
+        setProfile(createFallbackProfile(result.data.user));
+      }
+    }
+    
+    return result;
   };
 
   const register = async (email, password, fullName, role = 'student', studentId = null) => {
@@ -540,6 +590,7 @@ export const AuthProvider = ({ children }) => {
       logout, 
       loading,
       updateProfile,
+      refetchProfile,
       hasRole,
       isInstructor,
       isAdmin,

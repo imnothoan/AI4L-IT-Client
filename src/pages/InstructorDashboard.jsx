@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useNavigate } from 'react-router-dom';
@@ -8,9 +8,10 @@ import { toast } from 'react-toastify';
 import {
   FileText, Users, Plus, Clock, BarChart3, CheckCircle, Trash2,
   Calendar, X, Save, Loader2, BookOpen, Shield, ClipboardList,
-  Edit2, GraduationCap, Activity, AlertTriangle, Search, LogOut, User
+  Edit2, GraduationCap, Activity, AlertTriangle, Search, LogOut, User, Settings
 } from 'lucide-react';
 import LanguageSwitcher from '../components/LanguageSwitcher';
+import ProfileSettings from '../components/ProfileSettings';
 import { ACADEMIC_YEAR_PAST_YEARS, ACADEMIC_YEAR_FUTURE_YEARS } from '../lib/constants';
 
 // ============================================
@@ -26,6 +27,40 @@ function isValidEmail(email) {
 // Validate class code format (alphanumeric with hyphens)
 function isValidClassCode(code) {
   return /^[A-Za-z0-9-_]+$/.test(code);
+}
+
+/**
+ * Convert datetime-local value to ISO string for database storage
+ * datetime-local input gives a string like "2024-12-18T12:00" which is local time
+ * new Date() interprets this as local time, then toISOString() converts to UTC
+ * Supabase TIMESTAMPTZ stores in UTC and converts back to local when reading
+ * This ensures consistent timezone handling across the application
+ * @param {string} datetimeLocalValue - Value from datetime-local input (e.g., "2024-12-18T12:00")
+ * @returns {string} ISO string in UTC (e.g., "2024-12-18T05:00:00.000Z" for UTC+7)
+ */
+function toISOWithTimezone(datetimeLocalValue) {
+  if (!datetimeLocalValue) return null;
+  // Create date from local datetime string - JavaScript interprets this as local time
+  const date = new Date(datetimeLocalValue);
+  // Convert to ISO/UTC format for database storage
+  return date.toISOString();
+}
+
+/**
+ * Convert ISO/database timestamp to datetime-local format for input
+ * @param {string} isoString - ISO string or database timestamp
+ * @returns {string} datetime-local format (YYYY-MM-DDTHH:mm)
+ */
+function toDatetimeLocal(isoString) {
+  if (!isoString) return '';
+  const date = new Date(isoString);
+  // Format as local datetime for input
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
 // ============================================
@@ -155,8 +190,8 @@ function CreateExamForm({ classId, onClose, onSuccess }) {
             title: trimmedTitle,
             description: formData.description?.trim() || null,
             duration_minutes: durationMinutes,
-            start_time: formData.start_time,
-            end_time: formData.end_time,
+            start_time: toISOWithTimezone(formData.start_time),
+            end_time: toISOWithTimezone(formData.end_time),
             is_shuffled: formData.is_shuffled,
             show_result_immediately: formData.show_result_immediately,
             allow_review: formData.allow_review,
@@ -418,6 +453,274 @@ function CreateExamForm({ classId, onClose, onSuccess }) {
 }
 
 // ============================================
+// EDIT EXAM FORM
+// ============================================
+
+function EditExamForm({ exam, onClose, onSuccess }) {
+  const { t } = useLanguage();
+  const [loading, setLoading] = useState(false);
+  const [formData, setFormData] = useState({
+    title: exam?.title || '',
+    description: exam?.description || '',
+    duration_minutes: exam?.duration_minutes || 60,
+    start_time: toDatetimeLocal(exam?.start_time) || '',
+    end_time: toDatetimeLocal(exam?.end_time) || '',
+    is_shuffled: exam?.is_shuffled ?? true,
+    show_result_immediately: exam?.show_result_immediately ?? false,
+    allow_review: exam?.allow_review ?? false,
+    passing_score: exam?.passing_score || 50,
+    max_attempts: exam?.max_attempts || 1,
+    require_camera: exam?.require_camera ?? true,
+    require_fullscreen: exam?.require_fullscreen ?? true,
+    max_tab_violations: exam?.max_tab_violations || 3,
+    max_fullscreen_violations: exam?.max_fullscreen_violations || 3,
+  });
+
+  const handleChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value
+    }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    // Validation
+    const trimmedTitle = formData.title?.trim();
+    if (!trimmedTitle) {
+      toast.error(t('validation.examTitleRequired'));
+      return;
+    }
+    
+    if (!formData.start_time || !formData.end_time) {
+      toast.error(t('validation.selectTime'));
+      return;
+    }
+    
+    const startTime = new Date(formData.start_time);
+    const endTime = new Date(formData.end_time);
+    
+    if (endTime <= startTime) {
+      toast.error(t('validation.endAfterStart'));
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('exams')
+        .update({
+          title: trimmedTitle,
+          description: formData.description?.trim() || null,
+          duration_minutes: parseInt(formData.duration_minutes) || 60,
+          start_time: toISOWithTimezone(formData.start_time),
+          end_time: toISOWithTimezone(formData.end_time),
+          is_shuffled: formData.is_shuffled,
+          show_result_immediately: formData.show_result_immediately,
+          allow_review: formData.allow_review,
+          passing_score: parseFloat(formData.passing_score) || 50,
+          max_attempts: parseInt(formData.max_attempts) || 1,
+          require_camera: formData.require_camera,
+          require_fullscreen: formData.require_fullscreen,
+          max_tab_violations: parseInt(formData.max_tab_violations) || 3,
+          max_fullscreen_violations: parseInt(formData.max_fullscreen_violations) || 3,
+        })
+        .eq('id', exam.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      toast.success(t('exam.updateSuccess'));
+      onSuccess?.(data);
+      onClose();
+    } catch (error) {
+      console.error('Update exam error:', error);
+      toast.error(t('exam.updateError'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Basic Info */}
+      <div className="space-y-4">
+        <h3 className="font-semibold text-gray-900 flex items-center space-x-2">
+          <BookOpen className="w-5 h-5 text-primary" />
+          <span>{t('exam.basicInfo')}</span>
+        </h3>
+        
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            {t('exam.title')} <span className="text-danger">*</span>
+          </label>
+          <input
+            type="text"
+            name="title"
+            value={formData.title}
+            onChange={handleChange}
+            placeholder={t('exam.titlePlaceholder')}
+            className="input"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            {t('exam.description')}
+          </label>
+          <textarea
+            name="description"
+            value={formData.description}
+            onChange={handleChange}
+            placeholder={t('exam.descriptionPlaceholder')}
+            rows={3}
+            className="input resize-none"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {t('exam.durationMinutes')}
+            </label>
+            <input
+              type="number"
+              name="duration_minutes"
+              value={formData.duration_minutes}
+              onChange={handleChange}
+              min={5}
+              max={300}
+              className="input"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {t('exam.passingScore')}
+            </label>
+            <input
+              type="number"
+              name="passing_score"
+              value={formData.passing_score}
+              onChange={handleChange}
+              min={0}
+              max={100}
+              className="input"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Time Settings */}
+      <div className="space-y-4">
+        <h3 className="font-semibold text-gray-900 flex items-center space-x-2">
+          <Clock className="w-5 h-5 text-primary" />
+          <span>{t('exam.timeSettings')}</span>
+        </h3>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {t('exam.startTime')} <span className="text-danger">*</span>
+            </label>
+            <input
+              type="datetime-local"
+              name="start_time"
+              value={formData.start_time}
+              onChange={handleChange}
+              className="input"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {t('exam.endTime')} <span className="text-danger">*</span>
+            </label>
+            <input
+              type="datetime-local"
+              name="end_time"
+              value={formData.end_time}
+              onChange={handleChange}
+              className="input"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Anti-Cheat Settings */}
+      <div className="space-y-4">
+        <h3 className="font-semibold text-gray-900 flex items-center space-x-2">
+          <Shield className="w-5 h-5 text-primary" />
+          <span>{t('exam.antiCheatSettings')}</span>
+        </h3>
+
+        <div className="grid grid-cols-2 gap-4">
+          <label className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
+            <input
+              type="checkbox"
+              name="require_camera"
+              checked={formData.require_camera}
+              onChange={handleChange}
+              className="w-5 h-5 text-primary rounded"
+            />
+            <span className="text-sm text-gray-700">{t('exam.requireCamera')}</span>
+          </label>
+
+          <label className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
+            <input
+              type="checkbox"
+              name="require_fullscreen"
+              checked={formData.require_fullscreen}
+              onChange={handleChange}
+              className="w-5 h-5 text-primary rounded"
+            />
+            <span className="text-sm text-gray-700">{t('exam.requireFullscreen')}</span>
+          </label>
+
+          <label className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
+            <input
+              type="checkbox"
+              name="is_shuffled"
+              checked={formData.is_shuffled}
+              onChange={handleChange}
+              className="w-5 h-5 text-primary rounded"
+            />
+            <span className="text-sm text-gray-700">{t('exam.shuffleQuestions')}</span>
+          </label>
+
+          <label className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
+            <input
+              type="checkbox"
+              name="show_result_immediately"
+              checked={formData.show_result_immediately}
+              onChange={handleChange}
+              className="w-5 h-5 text-primary rounded"
+            />
+            <span className="text-sm text-gray-700">{t('exam.showResultImmediately')}</span>
+          </label>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-200">
+        <button type="button" onClick={onClose} className="btn-secondary">
+          {t('common.cancel')}
+        </button>
+        <button type="submit" disabled={loading} className="btn-primary">
+          {loading ? (
+            <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+          ) : (
+            <Save className="w-5 h-5 mr-2" />
+          )}
+          {t('exam.update')}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// ============================================
 // ADD STUDENT FORM
 // ============================================
 
@@ -431,10 +734,17 @@ function AddStudentForm({ classId, onClose, onSuccess }) {
   // Add student using RPC function (preferred method - bypasses RLS issues)
   const addStudentViaRPC = async (studentEmail) => {
     try {
+      if (import.meta.env.DEV) {
+        console.log('[AddStudent] Calling RPC add_student_to_class with:', { classId, studentEmail: studentEmail.toLowerCase().trim() });
+      }
       const { data, error } = await supabase.rpc('add_student_to_class', {
         p_class_id: classId,
         p_student_email: studentEmail.toLowerCase().trim()
       });
+
+      if (import.meta.env.DEV) {
+        console.log('[AddStudent] RPC response:', { data, error });
+      }
 
       if (error) {
         console.error('RPC add_student_to_class error:', error);
@@ -443,10 +753,16 @@ function AddStudentForm({ classId, onClose, onSuccess }) {
 
       // RPC returns JSONB with success and optional error
       if (data && data.success) {
+        if (import.meta.env.DEV) {
+          console.log('[AddStudent] Successfully added student with ID:', data.student_id);
+        }
         return { success: true, student_id: data.student_id };
       }
       
       // Return the error code from RPC response
+      if (import.meta.env.DEV) {
+        console.log('[AddStudent] RPC returned error:', data?.error);
+      }
       return { success: false, error: data?.error || 'unknown_error' };
     } catch (err) {
       console.error('RPC call exception:', err);
@@ -1121,10 +1437,12 @@ function QuestionForm({ question, onSave, onCancel, saving }) {
 
 function StudentAnalyticsTab({ classId, exams }) {
   const { t } = useLanguage();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); // Start with false since no exam is selected
   const [selectedExamId, setSelectedExamId] = useState('');
   const [sessions, setSessions] = useState([]);
   const [analyticsData, setAnalyticsData] = useState(null);
+  const [expandedSessionId, setExpandedSessionId] = useState(null);
+  const [proctoringLogs, setProctoringLogs] = useState({});
 
   // Load sessions for selected exam
   useEffect(() => {
@@ -1201,6 +1519,62 @@ function StudentAnalyticsTab({ classId, exams }) {
     if (violations === 0) return { label: t('analytics.integrity.good'), color: 'bg-success-100 text-success-700' };
     if (violations <= 3) return { label: t('analytics.integrity.warning'), color: 'bg-warning-100 text-warning-700' };
     return { label: t('analytics.integrity.suspicious'), color: 'bg-danger-100 text-danger-700' };
+  };
+  
+  // Load proctoring logs for a specific session
+  const loadProctoringLogs = async (sessionId) => {
+    if (proctoringLogs[sessionId]) {
+      // Already loaded, just toggle
+      setExpandedSessionId(expandedSessionId === sessionId ? null : sessionId);
+      return;
+    }
+    
+    try {
+      const { data, error } = await supabase
+        .from('proctoring_logs')
+        .select('*')
+        .eq('session_id', sessionId)
+        .order('timestamp', { ascending: true });
+      
+      if (error) throw error;
+      
+      setProctoringLogs(prev => ({
+        ...prev,
+        [sessionId]: data || []
+      }));
+      setExpandedSessionId(sessionId);
+    } catch (err) {
+      console.error('Failed to load proctoring logs:', err);
+      toast.error('Failed to load evidence');
+    }
+  };
+  
+  const getEventTypeLabel = (eventType) => {
+    const labels = {
+      'tab_switch': 'Tab Switch',
+      'fullscreen_exit': 'Fullscreen Exit',
+      'multi_screen': 'Multiple Screens',
+      'object_detected': 'Object Detected',
+      'face_not_detected': 'Face Not Detected',
+      'gaze_away': 'Looking Away',
+      'copy_paste_attempt': 'Copy/Paste',
+      'right_click': 'Right Click',
+      'keyboard_shortcut': 'Keyboard Shortcut',
+      'remote_desktop_detected': 'Remote Desktop',
+      'screen_share_detected': 'Screen Sharing',
+      'ai_alert': 'AI Detection',
+      'manual_flag': 'Manual Flag'
+    };
+    return labels[eventType] || eventType;
+  };
+  
+  const getSeverityColor = (severity) => {
+    switch (severity) {
+      case 'critical': return 'bg-danger-100 text-danger-700';
+      case 'warning': return 'bg-warning-100 text-warning-700';
+      case 'info': return 'bg-gray-100 text-gray-700';
+      default: return 'bg-gray-100 text-gray-600';
+    }
   };
 
   return (
@@ -1335,55 +1709,127 @@ function StudentAnalyticsTab({ classId, exams }) {
               <tbody className="divide-y divide-gray-100">
                 {sessions.map((session, idx) => {
                   const integrity = getIntegrityStatus(session);
+                  const isExpanded = expandedSessionId === session.id;
+                  const logs = proctoringLogs[session.id] || [];
+                  
                   return (
-                    <tr key={session.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 text-sm text-gray-500">{idx + 1}</td>
-                      <td className="px-4 py-3">
-                        <div>
-                          <p className="font-medium text-text-main">{session.student?.full_name || 'N/A'}</p>
-                          <p className="text-xs text-gray-500">{session.student?.email}</p>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`font-bold ${session.passed ? 'text-success' : 'text-danger'}`}>
-                          {session.percentage?.toFixed(1) || 0}%
-                        </span>
-                        <span className="text-xs text-gray-500 ml-1">
-                          ({session.total_score}/{session.max_score})
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-600">
-                        {formatDateTime(session.submitted_at)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center space-x-2 text-xs">
-                          <span className="px-2 py-0.5 bg-warning-50 text-warning-700 rounded">
-                            AI: {session.cheat_count || 0}
+                    <React.Fragment key={session.id}>
+                      <tr className="hover:bg-gray-50 cursor-pointer" onClick={() => loadProctoringLogs(session.id)}>
+                        <td className="px-4 py-3 text-sm text-gray-500">{idx + 1}</td>
+                        <td className="px-4 py-3">
+                          <div>
+                            <p className="font-medium text-text-main">{session.student?.full_name || 'N/A'}</p>
+                            <p className="text-xs text-gray-500">{session.student?.email}</p>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`font-bold ${session.passed ? 'text-success' : 'text-danger'}`}>
+                            {session.percentage?.toFixed(1) || 0}%
                           </span>
-                          <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded">
-                            Tab: {session.tab_violations || 0}
+                          <span className="text-xs text-gray-500 ml-1">
+                            ({session.total_score}/{session.max_score})
                           </span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${integrity.color}`}>
-                          {integrity.label}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`badge ${
-                          session.status === 'submitted' ? 'badge-success' :
-                          session.status === 'auto_submitted' ? 'bg-warning-100 text-warning-700' :
-                          session.status === 'in_progress' ? 'bg-primary-100 text-primary-700' :
-                          'bg-gray-100 text-gray-600'
-                        }`}>
-                          {session.status === 'submitted' ? t('analytics.status.submitted') :
-                           session.status === 'auto_submitted' ? t('analytics.status.autoSubmitted') :
-                           session.status === 'in_progress' ? t('analytics.status.inProgress') :
-                           session.status}
-                        </span>
-                      </td>
-                    </tr>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          {formatDateTime(session.submitted_at)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center space-x-2 text-xs">
+                            <span className="px-2 py-0.5 bg-warning-50 text-warning-700 rounded">
+                              AI: {session.cheat_count || 0}
+                            </span>
+                            <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded">
+                              Tab: {session.tab_violations || 0}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${integrity.color}`}>
+                            {integrity.label}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`badge ${
+                            session.status === 'submitted' ? 'badge-success' :
+                            session.status === 'auto_submitted' ? 'bg-warning-100 text-warning-700' :
+                            session.status === 'in_progress' ? 'bg-primary-100 text-primary-700' :
+                            'bg-gray-100 text-gray-600'
+                          }`}>
+                            {session.status === 'submitted' ? t('analytics.status.submitted') :
+                             session.status === 'auto_submitted' ? t('analytics.status.autoSubmitted') :
+                             session.status === 'in_progress' ? t('analytics.status.inProgress') :
+                             session.status}
+                          </span>
+                        </td>
+                      </tr>
+                      {/* Expanded Row: Proctoring Evidence */}
+                      {isExpanded && (
+                        <tr>
+                          <td colSpan="7" className="px-4 py-4 bg-gray-50">
+                            <div className="space-y-4">
+                              <h4 className="font-semibold text-gray-900 flex items-center space-x-2">
+                                <Shield className="w-4 h-4 text-primary" />
+                                <span>Proctoring Evidence Timeline</span>
+                                <span className="text-xs font-normal text-gray-500">({logs.length} events)</span>
+                              </h4>
+                              
+                              {logs.length === 0 ? (
+                                <p className="text-sm text-gray-500 text-center py-4">No violations recorded</p>
+                              ) : (
+                                <div className="space-y-3 max-h-96 overflow-y-auto">
+                                  {logs.map((log) => (
+                                    <div key={log.id} className="bg-white rounded-lg p-3 shadow-sm border border-gray-200">
+                                      <div className="flex items-start justify-between mb-2">
+                                        <div className="flex items-center space-x-2">
+                                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${getSeverityColor(log.severity)}`}>
+                                            {log.severity}
+                                          </span>
+                                          <span className="text-sm font-medium text-gray-900">
+                                            {getEventTypeLabel(log.event_type)}
+                                          </span>
+                                        </div>
+                                        <span className="text-xs text-gray-500">
+                                          {formatDateTime(log.timestamp)}
+                                        </span>
+                                      </div>
+                                      
+                                      {/* Details */}
+                                      {log.details && Object.keys(log.details).length > 0 && (
+                                        <div className="mb-2 p-2 bg-gray-50 rounded">
+                                          <div className="text-xs font-medium text-gray-700 mb-1">Details:</div>
+                                          <div className="text-xs text-gray-600 space-y-0.5">
+                                            {Object.entries(log.details).map(([key, value]) => (
+                                              <div key={key}>
+                                                <span className="font-medium">{key}:</span> {String(value)}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                      
+                                      {/* Screenshot Evidence */}
+                                      {log.screenshot_url && (
+                                        <div className="mt-2">
+                                          <img 
+                                            src={log.screenshot_url} 
+                                            alt="Evidence" 
+                                            className="rounded border border-gray-300 max-w-md cursor-pointer hover:opacity-90 transition-opacity"
+                                            onClick={() => window.open(log.screenshot_url, '_blank')}
+                                          />
+                                          <p className="text-xs text-gray-500 mt-1">
+                                            Click to view full size
+                                          </p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
@@ -1497,8 +1943,50 @@ function CreateClassForm({ onClose, onSuccess }) {
           return;
         }
 
+        // RPC returns { success: true, class_id: UUID }
+        // We need to fetch the full class data to pass to onSuccess
+        let newClassData = null;
+        if (data?.class_id) {
+          const { data: classData, error: fetchError } = await supabase
+            .from('classes')
+            .select('*')
+            .eq('id', data.class_id)
+            .single();
+          
+          if (!fetchError && classData) {
+            newClassData = classData;
+          } else {
+            // Fallback: construct class data from form
+            newClassData = {
+              id: data.class_id,
+              name: trimmedName,
+              code: trimmedCode,
+              description: formData.description?.trim() || null,
+              semester: formData.semester || null,
+              academic_year: formData.academic_year || null,
+              instructor_id: user?.id,
+              is_active: true,
+              created_at: new Date().toISOString()
+            };
+          }
+        } else {
+          // RPC succeeded but didn't return class_id - create fallback
+          console.warn('RPC create_class succeeded but no class_id returned');
+          newClassData = {
+            id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
+            name: trimmedName,
+            code: trimmedCode,
+            description: formData.description?.trim() || null,
+            semester: formData.semester || null,
+            academic_year: formData.academic_year || null,
+            instructor_id: user?.id,
+            is_active: true,
+            created_at: new Date().toISOString()
+          };
+        }
+
         toast.success(t('class.createSuccess'));
-        onSuccess?.(data);
+        onSuccess?.(newClassData);
         onClose();
       } catch (error) {
         console.error('Create class error:', error);
@@ -1650,6 +2138,8 @@ export default function InstructorDashboard() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('exams'); // 'exams' | 'students' | 'analytics'
   const [showCreateExam, setShowCreateExam] = useState(false);
+  const [showEditExam, setShowEditExam] = useState(false);
+  const [examToEdit, setExamToEdit] = useState(null);
   const [showAddStudent, setShowAddStudent] = useState(false);
   const [showCreateClass, setShowCreateClass] = useState(false);
   const [showManageQuestions, setShowManageQuestions] = useState(false);
@@ -1657,6 +2147,13 @@ export default function InstructorDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [examSessions, setExamSessions] = useState([]);
   const [selectedExamForAnalytics, setSelectedExamForAnalytics] = useState(null);
+  const [showProfileSettings, setShowProfileSettings] = useState(false);
+
+  // Handler to open edit exam modal
+  const handleEditExam = (exam) => {
+    setExamToEdit(exam);
+    setShowEditExam(true);
+  };
 
   // Load classes
   useEffect(() => {
@@ -1700,15 +2197,52 @@ export default function InstructorDashboard() {
           .order('created_at', { ascending: false });
         setExams(examsData || []);
 
-        // Load enrollments with student profiles
-        const { data: enrollmentsData } = await supabase
-          .from('enrollments')
-          .select(`
-            *,
-            student:profiles(*)
-          `)
-          .eq('class_id', selectedClass.id);
-        setStudents(enrollmentsData || []);
+        // Load enrollments with student profiles using RPC (more reliable than direct query with RLS)
+        if (import.meta.env.DEV) {
+          console.log('[InstructorDashboard] Loading enrollments for class:', selectedClass.id);
+        }
+        
+        // Try RPC first for better reliability, fallback to direct query
+        let enrollmentsData = [];
+        let enrollError = null;
+        
+        try {
+          const { data: rpcResult, error: rpcError } = await supabase.rpc('get_class_enrollments', {
+            p_class_id: selectedClass.id
+          });
+          
+          if (!rpcError && rpcResult?.success) {
+            enrollmentsData = rpcResult.enrollments || [];
+            if (import.meta.env.DEV) {
+              console.log('[InstructorDashboard] Loaded enrollments via RPC:', enrollmentsData.length, enrollmentsData);
+            }
+          } else {
+            // Provide detailed error for debugging
+            const errorDetail = rpcError?.message || rpcResult?.error || 'Unknown RPC error';
+            throw new Error(`get_class_enrollments RPC failed: ${errorDetail}. This may occur if the RPC function is not deployed in Supabase.`);
+          }
+        } catch (rpcErr) {
+          console.warn('[InstructorDashboard] RPC get_class_enrollments failed, trying direct query:', rpcErr.message || rpcErr);
+          // Fallback to direct query
+          const result = await supabase
+            .from('enrollments')
+            .select(`
+              *,
+              student:profiles(*)
+            `)
+            .eq('class_id', selectedClass.id);
+          
+          enrollmentsData = result.data || [];
+          enrollError = result.error;
+          
+          if (enrollError) {
+            console.error('[InstructorDashboard] Error loading enrollments:', enrollError);
+          } else if (import.meta.env.DEV) {
+            console.log('[InstructorDashboard] Loaded enrollments via direct query:', enrollmentsData.length, enrollmentsData);
+          }
+        }
+        
+        setStudents(enrollmentsData);
 
         // Calculate stats
         const activeExams = (examsData || []).filter(e => e.status === 'published').length;
@@ -1842,10 +2376,15 @@ export default function InstructorDashboard() {
         
         <div className="flex items-center space-x-4">
           <LanguageSwitcher compact />
-          <div className="flex items-center space-x-2 text-sm font-medium text-gray-600 bg-gray-100 px-3 py-1.5 rounded-full">
+          <button
+            onClick={() => setShowProfileSettings(true)}
+            className="flex items-center space-x-2 text-sm font-medium text-gray-600 bg-gray-100 px-3 py-1.5 rounded-full hover:bg-gray-200 transition-colors cursor-pointer"
+            title={t('profile.settings') || 'Cài đặt tài khoản'}
+          >
             <GraduationCap className="w-4 h-4" />
             <span>{profile?.full_name || user?.email}</span>
-          </div>
+            <Settings className="w-3.5 h-3.5 text-gray-400" />
+          </button>
           <button
             onClick={handleLogout}
             className="flex items-center space-x-2 text-danger hover:bg-danger-50 px-4 py-2 rounded-lg transition-colors text-sm font-semibold"
@@ -1855,6 +2394,12 @@ export default function InstructorDashboard() {
           </button>
         </div>
       </nav>
+
+      {/* Profile Settings Modal */}
+      <ProfileSettings 
+        isOpen={showProfileSettings} 
+        onClose={() => setShowProfileSettings(false)} 
+      />
 
       <div className="flex">
         {/* Sidebar - Class List */}
@@ -2021,6 +2566,16 @@ export default function InstructorDashboard() {
                               </div>
                               
                               <div className="flex items-center space-x-2">
+                                {/* Edit button - always visible */}
+                                <button 
+                                  onClick={() => handleEditExam(exam)}
+                                  className="btn-secondary text-sm"
+                                  title={t('exam.edit')}
+                                >
+                                  <Edit2 className="w-4 h-4 mr-1" />
+                                  {t('exam.edit')}
+                                </button>
+                                
                                 {exam.status === 'draft' && (
                                   <button
                                     onClick={() => handlePublishExam(exam.id)}
@@ -2097,6 +2652,7 @@ export default function InstructorDashboard() {
                             <th className="text-left px-4 py-3 text-sm font-semibold text-gray-700">{t('table.name')}</th>
                             <th className="text-left px-4 py-3 text-sm font-semibold text-gray-700">{t('table.email')}</th>
                             <th className="text-left px-4 py-3 text-sm font-semibold text-gray-700">{t('table.studentId')}</th>
+                            <th className="text-left px-4 py-3 text-sm font-semibold text-gray-700">{t('student.enrolledAt')}</th>
                             <th className="text-left px-4 py-3 text-sm font-semibold text-gray-700">{t('table.status')}</th>
                             <th className="text-right px-4 py-3 text-sm font-semibold text-gray-700">{t('table.actions')}</th>
                           </tr>
@@ -2112,17 +2668,29 @@ export default function InstructorDashboard() {
                                 s.student?.student_id?.toLowerCase().includes(q)
                               );
                             })
-                            .map((enrollment, idx) => (
-                              <tr key={enrollment.id} className="hover:bg-gray-50">
+                            .map((enrollment, idx) => {
+                              // Check if student joined within last 5 minutes for "NEW" indicator
+                              const isNewlyJoined = enrollment.enrolled_at && 
+                                (Date.now() - new Date(enrollment.enrolled_at).getTime()) < 5 * 60 * 1000;
+                              
+                              return (
+                              <tr key={enrollment.id} className={`hover:bg-gray-50 transition-colors ${isNewlyJoined ? 'bg-success-50' : ''}`}>
                                 <td className="px-4 py-3 text-sm text-gray-500">{idx + 1}</td>
                                 <td className="px-4 py-3">
                                   <div className="flex items-center space-x-3">
-                                    <div className="w-8 h-8 bg-primary-100 rounded-full flex items-center justify-center">
-                                      <User className="w-4 h-4 text-primary" />
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isNewlyJoined ? 'bg-success-100 ring-2 ring-success-300 ring-offset-1' : 'bg-primary-100'}`}>
+                                      <User className={`w-4 h-4 ${isNewlyJoined ? 'text-success' : 'text-primary'}`} />
                                     </div>
-                                    <span className="font-medium text-text-main">
-                                      {enrollment.student?.full_name || 'N/A'}
-                                    </span>
+                                    <div className="flex items-center space-x-2">
+                                      <span className="font-medium text-text-main">
+                                        {enrollment.student?.full_name || 'N/A'}
+                                      </span>
+                                      {isNewlyJoined && (
+                                        <span className="px-1.5 py-0.5 text-[10px] font-bold uppercase bg-success text-white rounded animate-pulse">
+                                          NEW
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-600">
@@ -2130,6 +2698,15 @@ export default function InstructorDashboard() {
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-600">
                                   {enrollment.student?.student_id || '-'}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-500">
+                                  {enrollment.enrolled_at ? new Date(enrollment.enrolled_at).toLocaleString('vi-VN', {
+                                    day: '2-digit',
+                                    month: '2-digit',
+                                    year: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                  }) : '-'}
                                 </td>
                                 <td className="px-4 py-3">
                                   <span className={`badge ${
@@ -2150,7 +2727,8 @@ export default function InstructorDashboard() {
                                   </button>
                                 </td>
                               </tr>
-                            ))}
+                              );
+                            })}
                         </tbody>
                       </table>
                     </div>
@@ -2223,6 +2801,28 @@ export default function InstructorDashboard() {
             setExams(prev => [newExam, ...prev]);
           }}
         />
+      </Modal>
+
+      <Modal
+        isOpen={showEditExam}
+        onClose={() => {
+          setShowEditExam(false);
+          setExamToEdit(null);
+        }}
+        title={t('instructor.editExamTitle')}
+      >
+        {examToEdit && (
+          <EditExamForm
+            exam={examToEdit}
+            onClose={() => {
+              setShowEditExam(false);
+              setExamToEdit(null);
+            }}
+            onSuccess={(updatedExam) => {
+              setExams(prev => prev.map(e => e.id === updatedExam.id ? updatedExam : e));
+            }}
+          />
+        )}
       </Modal>
 
       <Modal
