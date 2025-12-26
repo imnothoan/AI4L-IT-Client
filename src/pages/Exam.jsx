@@ -12,6 +12,9 @@ import {
   Shield, Loader2, CheckCircle, XCircle, Eye, EyeOff, Monitor
 } from 'lucide-react';
 import FaceVerification from '../components/FaceVerification';
+import AIWarningToast from '../components/AIWarningToast';
+import { silentVerifyFace, loadFaceModels, captureVideoFrame } from '../lib/faceVerificationUtils';
+import { initMediaPipeProctoring, analyzeFrame, isMediaPipeReady, resetAlertCooldowns, cleanup as cleanupMediaPipe } from '../lib/mediaPipeProctoring';
 
 // ============================================
 // CONSTANTS
@@ -37,7 +40,14 @@ const SUBMIT_TIMEOUT_ERROR = 'SUBMIT_TIMEOUT';
 
 // Evidence capture constants
 const SCREENSHOT_QUALITY = 0.85; // JPEG quality for evidence screenshots
-const CRITICAL_EVENTS_FOR_EVIDENCE = ['phoneDetected', 'headphonesDetected', 'materialDetected', 'multiPerson'];
+const CRITICAL_EVENTS_FOR_EVIDENCE = ['phoneDetected', 'headphonesDetected', 'materialDetected', 'multiPerson', 'faceVerificationFailed'];
+
+// Silent face verification constants
+const SILENT_VERIFICATION_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
+const SILENT_VERIFICATION_COOLDOWN_MS = 30 * 1000; // 30 seconds between warnings
+
+// API URL for AI proctoring endpoints
+const API_URL = import.meta.env.VITE_API_URL || 'https://smartexampro-api.onrender.com';
 
 export default function Exam() {
   const { id: examId } = useParams();
@@ -48,6 +58,7 @@ export default function Exam() {
   const timerRef = useRef(null);
   const randomVerifyRef = useRef(null);
   const isSubmittingRef = useRef(false); // Track submitting state for event handlers
+  const mediaPipeIntervalRef = useRef(null); // MediaPipe main thread processing interval
   const navigate = useNavigate();
 
   // Exam State
@@ -90,6 +101,10 @@ export default function Exam() {
   const [showNotes, setShowNotes] = useState(false);
   const [showQuestionNav, setShowQuestionNav] = useState(true);
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false); // Custom confirmation modal
+
+  // AI Warning State
+  const [aiWarning, setAiWarning] = useState(null);
+  const [aiWarningSeverity, setAiWarningSeverity] = useState('warning');
 
   // Current question
   const currentQuestion = questions[currentQuestionIndex];
@@ -553,6 +568,121 @@ export default function Exam() {
       return messageMap[code] || messageMap[payload] || payload;
     };
 
+    // ============================================
+    // AI WARNING OPTIMIZATION
+    // - Long-term cache (5 minutes) to reduce API calls
+    // - Skip API for repeated same-type violations
+    // - Debounce rapid violations
+    // ============================================
+    const aiWarningCache = new Map();
+    const AI_CACHE_TTL = 300000; // 5 minutes cache (tăng từ 1 phút)
+
+    // Track last warning time per type to debounce
+    const lastWarningTimePerType = new Map();
+    const WARNING_DEBOUNCE_MS = 1000; // 1 second between same type warnings (instant response)
+
+    // Function to get AI-generated warning message with smart caching
+    const fetchAIWarning = async (eventCode, warningNum, progress) => {
+      // Debounce: Skip if same event type was warned recently
+      const lastTime = lastWarningTimePerType.get(eventCode) || 0;
+      if (Date.now() - lastTime < WARNING_DEBOUNCE_MS) {
+        console.log(`[AI Warning] Debounced ${eventCode} (too soon)`);
+        return null; // Use fallback toast instead
+      }
+      lastWarningTimePerType.set(eventCode, Date.now());
+
+      // Check cache first - use eventCode + warningNum as key
+      // Limit warningNum to 3 for cache efficiency (messages are similar after 3)
+      const cacheWarningNum = Math.min(warningNum, 3);
+      const cacheKey = `${eventCode}-${cacheWarningNum}`;
+      const cached = aiWarningCache.get(cacheKey);
+      if (cached && (Date.now() - cached.time < AI_CACHE_TTL)) {
+        console.log(`[AI Warning] Using cached message for ${cacheKey}`);
+        return cached.message;
+      }
+
+      try {
+        const token = await supabase.auth.getSession().then(r => r.data?.session?.access_token);
+        if (!token) return null;
+
+        const response = await fetch(`${API_URL}/api/ai/explain-warning`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            eventType: eventCode,
+            warningCount: cacheWarningNum, // Use capped warning count
+            progress: progress
+          })
+        });
+
+        if (!response.ok) return null;
+
+        const result = await response.json();
+        const message = result.success ? result.message : null;
+
+        // Store in cache with longer TTL
+        if (message) {
+          aiWarningCache.set(cacheKey, { message, time: Date.now() });
+        }
+
+        return message;
+      } catch (error) {
+        console.warn('[AI Warning] Failed to fetch:', error);
+        return null;
+      }
+    };
+
+    // Message queue to handle async processing sequentially
+    let processingMessage = false;
+    const messageQueue = [];
+
+    const processNextMessage = async () => {
+      if (processingMessage || messageQueue.length === 0) return;
+
+      processingMessage = true;
+      const e = messageQueue.shift();
+
+      try {
+        const { type, payload, code } = e.data;
+        const translatedMessage = translateWorkerMessage(e.data);
+
+        if (type === 'STATUS') {
+          setStatus(translatedMessage);
+        } else if (type === 'ALERT') {
+          const newCheatCount = cheatCount + 1;
+          setCheatCount(newCheatCount);
+
+          // Capture screenshot for critical AI detections
+          const shouldCaptureScreenshot = CRITICAL_EVENTS_FOR_EVIDENCE.includes(code);
+          logProctoring('ai_alert', { message: payload, code }, shouldCaptureScreenshot);
+
+          // Try to get AI-generated warning message
+          const progress = questions.length > 0
+            ? Math.round((currentQuestionIndex / questions.length) * 100)
+            : 0;
+
+          const aiMessage = await fetchAIWarning(code, newCheatCount, progress);
+
+          if (aiMessage) {
+            // Show AI warning toast
+            setAiWarning(aiMessage);
+            setAiWarningSeverity(newCheatCount >= 3 ? 'critical' : 'warning');
+          } else {
+            // Fallback to regular toast
+            toast.warning(`${translate('anticheat.aiWarning')}: ${translatedMessage}`);
+          }
+        } else if (type === 'GAZE_AWAY') {
+          setGazeAwayCount(prev => prev + 1);
+        }
+      } finally {
+        processingMessage = false;
+        processNextMessage(); // Process next in queue
+      }
+    };
+
     // Initialize AI Worker
     workerRef.current = new Worker(new URL('../workers/ai.worker.js', import.meta.url), { type: 'module' });
 
@@ -560,19 +690,9 @@ export default function Exam() {
     workerRef.current.postMessage({ type: 'INIT' });
 
     workerRef.current.onmessage = (e) => {
-      const { type, payload, code } = e.data;
-      const translatedMessage = translateWorkerMessage(e.data);
-
-      if (type === 'STATUS') setStatus(translatedMessage);
-      else if (type === 'ALERT') {
-        setCheatCount(prev => prev + 1);
-        toast.warning(`${translate('anticheat.aiWarning')}: ${translatedMessage}`);
-        // Capture screenshot for critical AI detections
-        const shouldCaptureScreenshot = CRITICAL_EVENTS_FOR_EVIDENCE.includes(code);
-        logProctoring('ai_alert', { message: payload, code }, shouldCaptureScreenshot);
-      } else if (type === 'GAZE_AWAY') {
-        setGazeAwayCount(prev => prev + 1);
-      }
+      // Queue messages to process sequentially
+      messageQueue.push(e);
+      processNextMessage();
     };
 
     // Handle worker errors
@@ -637,8 +757,20 @@ export default function Exam() {
             // Ensure video is playing and has dimensions
             // HTMLMediaElement.HAVE_CURRENT_DATA = 2
             if (videoRef.current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && videoRef.current.videoWidth > 0) {
-              ctxRef.current.drawImage(videoRef.current, 0, 0, 640, 480);
-              const imageData = ctxRef.current.getImageData(0, 0, 640, 480);
+              // Use NATIVE video resolution instead of forcing 640x480
+              // This matches Python preprocessing which uses native webcam resolution
+              const videoWidth = videoRef.current.videoWidth;
+              const videoHeight = videoRef.current.videoHeight;
+
+              // Resize canvas to match video dimensions if needed
+              if (canvasRef.current.width !== videoWidth || canvasRef.current.height !== videoHeight) {
+                canvasRef.current.width = videoWidth;
+                canvasRef.current.height = videoHeight;
+                console.log(`🎬 Canvas resized to native video: ${videoWidth}x${videoHeight}`);
+              }
+
+              ctxRef.current.drawImage(videoRef.current, 0, 0, videoWidth, videoHeight);
+              const imageData = ctxRef.current.getImageData(0, 0, videoWidth, videoHeight);
               // Only send if we have valid image data
               if (imageData.data && imageData.data.length > 0) {
                 workerRef.current.postMessage(
@@ -741,6 +873,90 @@ export default function Exam() {
       if (workerRef.current) {
         workerRef.current.terminate();
       }
+    };
+  }, [examStarted, cameraStatus]);
+
+  // ============================================
+  // MEDIAPIPE PROCTORING (Main Thread)
+  // Handles: Multi-person detection, Head pose, Speech detection
+  // Runs separately from YOLO worker for better accuracy
+  // ============================================
+  useEffect(() => {
+    if (!examStarted || cameraStatus !== 'ready') return;
+
+    let isActive = true;
+
+    const startMediaPipeProctoring = async () => {
+      try {
+        console.log('[MediaPipe] Initializing proctoring on main thread...');
+        const initialized = await initMediaPipeProctoring();
+
+        if (!initialized || !isActive) {
+          console.warn('[MediaPipe] Failed to initialize or component unmounted');
+          return;
+        }
+
+        console.log('[MediaPipe] ✅ Proctoring initialized, starting analysis loop');
+        resetAlertCooldowns();
+
+        // Process frames at ~4 FPS for face analysis
+        const MEDIAPIPE_INTERVAL_MS = 250;
+
+        mediaPipeIntervalRef.current = setInterval(async () => {
+          if (!isActive || !videoRef.current || isSubmittingRef.current) return;
+
+          try {
+            const result = await analyzeFrame(videoRef.current);
+
+            if (result && result.alerts && result.alerts.length > 0) {
+              for (const alert of result.alerts) {
+                // Log proctoring event
+                logProctoring(alert.code || alert.type.toLowerCase(), {
+                  message: alert.message,
+                  severity: alert.severity,
+                  faceCount: result.faceCount,
+                  direction: alert.direction
+                });
+
+                // Show warning toast
+                if (alert.severity === 'critical') {
+                  setAiWarning(alert.message);
+                  setAiWarningSeverity('critical');
+                  setCheatCount(prev => prev + 1);
+                  toast.error(alert.message, { autoClose: 5000 });
+                } else {
+                  setAiWarning(alert.message);
+                  setAiWarningSeverity('warning');
+                  toast.warning(alert.message, { autoClose: 4000 });
+                }
+
+                // Update specific counters
+                if (alert.code === 'gazeAway' || alert.type === 'LOOKING_AWAY') {
+                  setGazeAwayCount(prev => prev + 1);
+                }
+              }
+            }
+          } catch (err) {
+            // Silently ignore analysis errors to not spam console
+          }
+        }, MEDIAPIPE_INTERVAL_MS);
+
+      } catch (error) {
+        console.error('[MediaPipe] Proctoring initialization error:', error);
+      }
+    };
+
+    // Small delay to ensure video is fully ready
+    const initTimeout = setTimeout(startMediaPipeProctoring, 500);
+
+    return () => {
+      isActive = false;
+      clearTimeout(initTimeout);
+      if (mediaPipeIntervalRef.current) {
+        clearInterval(mediaPipeIntervalRef.current);
+        mediaPipeIntervalRef.current = null;
+      }
+      cleanupMediaPipe();
     };
   }, [examStarted, cameraStatus]);
 
@@ -1149,6 +1365,9 @@ export default function Exam() {
   }, [user?.id]);
 
   // Schedule random face verifications during exam - fixed 3-minute interval
+  // Uses SILENT verification - no popup, just checks in background
+  const lastSilentVerificationWarning = useRef(0);
+
   useEffect(() => {
     if (!examStarted || !sessionId) return;
 
@@ -1156,24 +1375,105 @@ export default function Exam() {
     const isDemo = examId === 'demo' || examId === '1';
     if (isDemo) return;
 
-    // Fixed 3-minute interval for face verification
-    const CHECK_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
+    // Skip if no stored face embedding (can't verify)
+    if (!storedFaceEmbedding || !Array.isArray(storedFaceEmbedding) || storedFaceEmbedding.length !== 128) {
+      console.log('[Silent Verification] No valid stored embedding, skipping periodic checks');
+      return;
+    }
 
-    console.log('[Face Verification] Setting up 3-minute interval checks');
+    console.log('[Silent Verification] Setting up 3-minute interval checks');
 
-    const interval = setInterval(() => {
-      // Only trigger if exam is still in progress
-      if (examStarted && !isSubmitting && !showFaceVerification) {
-        console.log('[Face Verification] Triggering random check (3-min interval)');
-        triggerRandomVerification();
+    // Preload face models for faster verification
+    loadFaceModels().catch(err => {
+      console.warn('[Silent Verification] Failed to preload models:', err);
+    });
+
+    const interval = setInterval(async () => {
+      // Only verify if exam is still in progress and not submitting
+      if (!examStarted || isSubmitting || showFaceVerification) return;
+
+      // Check if video is available
+      if (!videoRef.current || videoRef.current.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        console.log('[Silent Verification] Video not ready, skipping this check');
+        return;
       }
-    }, CHECK_INTERVAL_MS);
+
+      console.log('[Silent Verification] Performing background face check...');
+
+      try {
+        // Perform silent verification from current video frame
+        const result = await silentVerifyFace(videoRef.current, storedFaceEmbedding);
+
+        if (result.success) {
+          setFaceVerificationCount(prev => prev + 1);
+
+          // Log verification result
+          if (sessionId && !DEMO_SESSION_IDS.includes(sessionId)) {
+            try {
+              await supabase.rpc('log_face_verification', {
+                p_session_id: sessionId,
+                p_verification_type: 'silent',
+                p_similarity_score: result.similarity || (result.isMatch ? 1.0 : 0),
+                p_is_match: result.isMatch
+              });
+            } catch (error) {
+              console.warn('[Silent Verification] Could not log:', error);
+            }
+          }
+
+          if (result.isMatch) {
+            console.log('[Silent Verification] ✅ Face verified successfully (background)');
+            // Silent success - no toast, no interruption
+          } else {
+            // Face mismatch detected!
+            console.warn('[Silent Verification] ⚠️ Face mismatch detected!');
+
+            const now = Date.now();
+            // Only show warning if cooldown has passed
+            if (now - lastSilentVerificationWarning.current > SILENT_VERIFICATION_COOLDOWN_MS) {
+              lastSilentVerificationWarning.current = now;
+
+              // Capture evidence screenshot
+              const evidence = await captureVideoFrame(videoRef.current, SCREENSHOT_QUALITY);
+
+              // Log as proctoring event with evidence
+              logProctoring('face_not_detected', {
+                type: 'silent_verification_failed',
+                distance: result.distance,
+                similarity: result.similarity
+              }, true); // captureScreenshot = true
+
+              // Show warning toast (but don't interrupt exam)
+              toast.warning(t('face.silentMismatch') || 'Khuôn mặt không khớp. Hệ thống đã ghi nhận.');
+
+              // Increment cheat count
+              setCheatCount(prev => prev + 1);
+            }
+          }
+        } else {
+          // Extraction failed - could be no face, multiple faces, etc
+          console.log('[Silent Verification] Check failed:', result.error);
+
+          if (result.error === 'MULTI_PERSON') {
+            // Multi-person is handled by ai.worker, just log here
+            console.log('[Silent Verification] Multiple people detected');
+          } else if (result.error === 'NO_FACE') {
+            // No face detected - could be looking away, covered camera, etc
+            // This is already handled by ai.worker with gaze detection
+            console.log('[Silent Verification] No face in frame');
+          }
+        }
+      } catch (error) {
+        console.error('[Silent Verification] Error:', error);
+      }
+    }, SILENT_VERIFICATION_INTERVAL_MS);
 
     return () => {
       clearInterval(interval);
     };
-  }, [examStarted, sessionId, examId, isSubmitting, showFaceVerification]);
+  }, [examStarted, sessionId, examId, isSubmitting, showFaceVerification, storedFaceEmbedding, t]);
 
+  // Legacy trigger function - only used for start/submit verification
   const triggerRandomVerification = () => {
     setFaceVerificationMode('random');
     setShowFaceVerification(true);
@@ -1199,6 +1499,20 @@ export default function Exam() {
     }
 
     toast.success(t('face.success'));
+
+    // Ensure exam camera is still active after face verification
+    // FaceVerification component has its own camera which is now stopped
+    // We need to make sure exam camera stream is reattached
+    if (cameraStreamRef.current && videoRef.current) {
+      const stream = cameraStreamRef.current;
+      if (stream.getTracks().some(track => track.readyState === 'live')) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(() => { });
+      } else {
+        // Camera stream died - restart it
+        retryCamera();
+      }
+    }
 
     // Execute pending callback if any
     if (pendingVerificationCallback) {
@@ -1251,6 +1565,18 @@ export default function Exam() {
     }
 
     toast.success(t('face.enrollSuccess'));
+
+    // Ensure exam camera is still active after face enrollment
+    if (cameraStreamRef.current && videoRef.current) {
+      const stream = cameraStreamRef.current;
+      if (stream.getTracks().some(track => track.readyState === 'live')) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(() => { });
+      } else {
+        // Camera stream died - restart it
+        retryCamera();
+      }
+    }
 
     // Execute pending callback
     if (pendingVerificationCallback) {
@@ -1369,6 +1695,8 @@ export default function Exam() {
 
     // For manual submit, show custom confirmation modal (window.confirm doesn't work well in fullscreen)
     if (!isAuto) {
+      // Set submitting flag early to prevent tab switch warnings during confirmation
+      isSubmittingRef.current = true;
       setShowSubmitConfirm(true);
       return;
     }
@@ -1377,12 +1705,18 @@ export default function Exam() {
     await executeSubmit(isAuto);
   };
 
+  // Called when user cancels the submit confirmation
+  const cancelSubmit = () => {
+    isSubmittingRef.current = false;
+    setShowSubmitConfirm(false);
+  };
+
   // Actual submit execution (called after confirmation)
   const executeSubmit = async (isAuto = false) => {
     setShowSubmitConfirm(false);
 
     setIsSubmitting(true);
-    isSubmittingRef.current = true; // Update ref for event handlers
+    isSubmittingRef.current = true; // Ensure ref is set (may already be set from handleSubmit)
 
     try {
       const isDemo = DEMO_EXAM_IDS.includes(examId) || DEMO_SESSION_IDS.includes(sessionId);
@@ -1523,6 +1857,8 @@ export default function Exam() {
         // Continue anyway - not critical
       }
 
+      // Keep isSubmittingRef.current = true during navigation to prevent tab switch warnings
+      // Don't reset it - the component will unmount anyway
       navigate('/');
     } catch (error) {
       console.error('Submit error:', error);
@@ -1532,9 +1868,10 @@ export default function Exam() {
       } else {
         toast.error(t('exam.submitError'));
       }
-    } finally {
+
+      // Only reset on error - successful submit navigates away
       setIsSubmitting(false);
-      isSubmittingRef.current = false; // Reset ref
+      isSubmittingRef.current = false;
     }
   };
 
@@ -1768,6 +2105,14 @@ export default function Exam() {
   // ============================================
   return (
     <div className="flex h-screen bg-background no-select">
+      {/* AI Warning Toast for intelligent proctoring alerts */}
+      <AIWarningToast
+        message={aiWarning}
+        severity={aiWarningSeverity}
+        onClose={() => setAiWarning(null)}
+        duration={8000}
+      />
+
       {/* Face Verification Modal for random checks */}
       <AnimatePresence>
         {showFaceVerification && (
@@ -1839,7 +2184,7 @@ export default function Exam() {
               {/* Buttons */}
               <div className="flex space-x-3">
                 <button
-                  onClick={() => setShowSubmitConfirm(false)}
+                  onClick={cancelSubmit}
                   className="flex-1 btn-secondary py-3"
                 >
                   {t('common.cancel')}

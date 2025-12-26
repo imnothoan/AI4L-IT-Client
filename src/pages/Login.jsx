@@ -523,7 +523,7 @@ export default function Login() {
 
         {/* Footer */}
         <p className="text-center text-gray-500 text-xs mt-4">
-          © 2025 {t('app.name')} {t('app.by')} <span className="font-bold text-orange-500">Arcane</span>. {t('app.subtitle')}.
+          © 2025 {t('app.name')} {t('app.by')} Arcane. {t('app.subtitle')}.
         </p>
       </motion.div>
     </div>
